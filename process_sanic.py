@@ -18,6 +18,7 @@ app = Sanic("overmind_gui")
 connected_clients: Set[WebsocketImplProtocol] = set()
 message_queue: Queue = None
 SHOULD_STOP = False
+MESSAGE_PROCESSING_STARTED = False
 
 
 HTML_TEMPLATE = """
@@ -99,34 +100,55 @@ async def index(_request):
 @app.route("/start")
 async def start_endpoint(_request):
     """Start the message processing loop."""
-    global SHOULD_STOP  # pylint: disable=global-statement
-    SHOULD_STOP = False
+    global MESSAGE_PROCESSING_STARTED, SHOULD_STOP  # pylint: disable=global-statement
 
-    # Start the message processing in a separate thread
-    threading.Thread(target=process_messages, daemon=True).start()
+    if not MESSAGE_PROCESSING_STARTED:
+        SHOULD_STOP = False
+        # Start the message processing in a separate thread
+        threading.Thread(target=process_messages, daemon=True).start()
+        MESSAGE_PROCESSING_STARTED = True
+        return response.text("Message processing started")
 
-    # Don't send a response - just let it hang
-    await asyncio.sleep(3600)  # Sleep for an hour
-    return response.text("OK")
+    return response.text("Message processing already running")
+
+
+@app.route("/status")
+async def status_endpoint(_request):
+    """Get the status of message processing."""
+    return response.json({
+        "message_processing_started": MESSAGE_PROCESSING_STARTED,
+        "should_stop": SHOULD_STOP,
+        "connected_clients": len(connected_clients)
+    })
 
 
 @app.websocket("/ws")
 async def websocket_handler(_request, websocket):
     """Handle websocket connections."""
     connected_clients.add(websocket)
+    print(f"WebSocket client connected. Total clients: {len(connected_clients)}")
     try:
         await websocket.wait_for_connection_lost()
     finally:
         connected_clients.discard(websocket)
+        print(f"WebSocket client disconnected. Total clients: {len(connected_clients)}")
 
 
 def process_messages():
     """Process messages from the queue and send to websocket clients."""
     global SHOULD_STOP  # pylint: disable=global-statement
 
+    print("Message processing thread started")
+
     while not SHOULD_STOP:
         try:
+            if message_queue is None:
+                print("Warning: message_queue is None, waiting...")
+                threading.Event().wait(1)
+                continue
+
             message = message_queue.get(timeout=1)
+            print(f"Received message: {message}")
 
             if message.get('type') == 'stop':
                 print("Sanic process received stop signal")
@@ -136,11 +158,19 @@ def process_messages():
                 break
             if message.get('type') == 'update':
                 # Send to all connected websocket clients
-                asyncio.run(broadcast_message(message))
+                if connected_clients:
+                    asyncio.run(broadcast_message(message))
+                    print(f"Broadcasted message to {len(connected_clients)} clients")
+                else:
+                    print("No connected clients to broadcast to")
 
-        except Exception:  # pylint: disable=broad-exception-caught
+        except Exception as e:  # pylint: disable=broad-exception-caught
             # Timeout or no message, continue
+            if str(e) != "":  # Don't log timeout exceptions
+                print(f"Exception in message processing: {e}")
             continue
+
+    print("Message processing thread finished")
 
 
 async def broadcast_message(message):
@@ -150,7 +180,8 @@ async def broadcast_message(message):
         for client in connected_clients:
             try:
                 await client.send(json.dumps(message))
-            except Exception:  # pylint: disable=broad-exception-caught
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                print(f"Failed to send message to client: {e}")
                 disconnected.add(client)
 
         # Remove disconnected clients
@@ -160,6 +191,7 @@ async def broadcast_message(message):
 
 def shutdown_sanic():
     """Shutdown the sanic application."""
+    print("Shutting down Sanic...")
     # Send signal to shutdown sanic
     os.kill(os.getpid(), signal.SIGTERM)
 
@@ -177,6 +209,7 @@ def sanic_main(config: Dict[str, Any]) -> None:
     message_queue = sanic_queue
 
     print(f"Sanic process started on port {port}")
+    print("Message queue initialized")
 
     # Run sanic with single_process=True to avoid multiprocessing context conflicts
     app.run(host="0.0.0.0", port=port, debug=True, single_process=True)
@@ -219,3 +252,15 @@ class TestSanic(unittest.TestCase):
         self.assertIn('port', config)
         self.assertIn('sanic_queue', config)
         self.assertEqual(config['port'], 8080)
+
+    def test_status_response_format(self):
+        """Test that status response has expected format."""
+        # Test the expected status response structure
+        expected_keys = ["message_processing_started", "should_stop", "connected_clients"]
+        status_response = {
+            "message_processing_started": False,
+            "should_stop": False,
+            "connected_clients": 0
+        }
+        for key in expected_keys:
+            self.assertIn(key, status_response)

@@ -40,9 +40,9 @@ def overmind_main(config: Dict[str, Any]) -> None:
 
             try:
                 sanic_queue.put_nowait(update_message)
-            except Exception:  # pylint: disable=broad-exception-caught
-                # Queue might be full, just continue
-                pass
+                print(f"Sent message #{counter} to sanic queue")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                print(f"Failed to send message to sanic queue: {e}")
 
             # Wait for 1 second
             time.sleep(1)

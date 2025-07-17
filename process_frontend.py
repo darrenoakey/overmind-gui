@@ -82,17 +82,23 @@ def frontend_main(config: Dict[str, Any]) -> None:
 
         print("Sanic server is ready")
 
-        # Call the start endpoint (don't wait for response)
-        try:
-            threading.Thread(
-                target=lambda: requests.get(f"http://localhost:{port}/start", timeout=1),
-                daemon=True
-            ).start()
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
+        # Call the start endpoint to start message processing
+        def start_message_processing():
+            try:
+                response = requests.get(f"http://localhost:{port}/start", timeout=5)
+                print(f"Start endpoint response: {response.status_code} - {response.text}")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                print(f"Error calling start endpoint: {e}")
+
+        start_thread = threading.Thread(target=start_message_processing, daemon=True)
+        start_thread.start()
+
+        # Give it a moment to start
+        threading.Event().wait(0.5)
 
         # Create webview window
         url = f"http://localhost:{port}"
+        print(f"Opening webview window to {url}")
         window = webview.create_window('Overmind GUI', url, width=800, height=600)
 
         # Start thread to check for stop messages
@@ -106,8 +112,8 @@ def frontend_main(config: Dict[str, Any]) -> None:
         # Start webview (this blocks until window is closed)
         try:
             webview.start(debug=False)
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            print(f"Webview error: {e}")
 
     except KeyboardInterrupt:
         print("Frontend process interrupted")
