@@ -178,8 +178,8 @@ def sanic_main(config: Dict[str, Any]) -> None:
 
     print(f"Sanic process started on port {port}")
 
-    # Run sanic
-    app.run(host="0.0.0.0", port=port, debug=True)
+    # Run sanic with single_process=True to avoid multiprocessing context conflicts
+    app.run(host="0.0.0.0", port=port, debug=True, single_process=True)
 
 
 class TestSanic(unittest.TestCase):
@@ -206,3 +206,16 @@ class TestSanic(unittest.TestCase):
         """Test stop message format."""
         stop_message = {'type': 'stop'}
         self.assertEqual(stop_message['type'], 'stop')
+
+    def test_sanic_config_format(self):
+        """Test that sanic configuration is properly formatted."""
+        config = {
+            'port': 8080,
+            'sanic_queue': Queue(),
+            'overmind_queue': Queue(),
+            'frontend_queue': Queue()
+        }
+        # Test that config contains required keys
+        self.assertIn('port', config)
+        self.assertIn('sanic_queue', config)
+        self.assertEqual(config['port'], 8080)

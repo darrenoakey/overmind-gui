@@ -23,14 +23,17 @@ def wait_for_sanic(port: int, timeout: int = 30) -> bool:
     start_time = time.time()
     url = f"http://localhost:{port}"
 
-    while time.time() - start_time < timeout:
-        try:
-            response = requests.get(url, timeout=1)
-            if response.status_code == 200:
-                return True
-        except requests.exceptions.RequestException:
-            pass
-        time.sleep(0.5)
+    try:
+        while time.time() - start_time < timeout:
+            try:
+                response = requests.get(url, timeout=1)
+                if response.status_code == 200:
+                    return True
+            except requests.exceptions.RequestException:
+                pass
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        return False
 
     return False
 
@@ -70,43 +73,47 @@ def frontend_main(config: Dict[str, Any]) -> None:
 
     print("Frontend process started")
 
-    # Wait for sanic to be ready
-    print(f"Waiting for sanic server on port {port}...")
-    if not wait_for_sanic(port):
-        print("Timeout waiting for sanic server")
-        return
-
-    print("Sanic server is ready")
-
-    # Call the start endpoint (don't wait for response)
     try:
-        threading.Thread(
-            target=lambda: requests.get(f"http://localhost:{port}/start", timeout=1),
+        # Wait for sanic to be ready
+        print(f"Waiting for sanic server on port {port}...")
+        if not wait_for_sanic(port):
+            print("Timeout waiting for sanic server")
+            return
+
+        print("Sanic server is ready")
+
+        # Call the start endpoint (don't wait for response)
+        try:
+            threading.Thread(
+                target=lambda: requests.get(f"http://localhost:{port}/start", timeout=1),
+                daemon=True
+            ).start()
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
+        # Create webview window
+        url = f"http://localhost:{port}"
+        window = webview.create_window('Overmind GUI', url, width=800, height=600)
+
+        # Start thread to check for stop messages
+        stop_checker = threading.Thread(
+            target=check_queue_for_stop,
+            args=(frontend_queue, window),
             daemon=True
-        ).start()
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
+        )
+        stop_checker.start()
 
-    # Create webview window
-    url = f"http://localhost:{port}"
-    window = webview.create_window('Overmind GUI', url, width=800, height=600)
+        # Start webview (this blocks until window is closed)
+        try:
+            webview.start(debug=False)
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
 
-    # Start thread to check for stop messages
-    stop_checker = threading.Thread(
-        target=check_queue_for_stop,
-        args=(frontend_queue, window),
-        daemon=True
-    )
-    stop_checker.start()
+    except KeyboardInterrupt:
+        print("Frontend process interrupted")
 
-    # Start webview (this blocks until window is closed)
-    try:
-        webview.start(debug=False)
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
-
-    # If we get here, window was closed - send stop to all other processes
-    print("Frontend window closed, sending stop signals")
+    # If we get here, window was closed or interrupted - send stop to all other processes
+    print("Frontend process finished, sending stop signals")
     try:
         sanic_queue.put_nowait({'type': 'stop'})
     except Exception:  # pylint: disable=broad-exception-caught

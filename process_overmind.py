@@ -18,33 +18,36 @@ def overmind_main(config: Dict[str, Any]) -> None:
     print("Overmind process started")
 
     counter = 0
-    while True:
-        # Check for stop message (non-blocking)
-        try:
-            message = overmind_queue.get_nowait()
-            if message.get('type') == 'stop':
-                print("Overmind process received stop signal")
-                break
-        except Exception:  # pylint: disable=broad-exception-caught
-            # No message available, continue
-            pass
+    try:
+        while True:
+            # Check for stop message (non-blocking)
+            try:
+                message = overmind_queue.get_nowait()
+                if message.get('type') == 'stop':
+                    print("Overmind process received stop signal")
+                    break
+            except Exception:  # pylint: disable=broad-exception-caught
+                # No message available, continue
+                pass
 
-        # Send update message to sanic
-        counter += 1
-        update_message = {
-            'type': 'update',
-            'data': f'Update #{counter} from overmind at {time.strftime("%H:%M:%S")}',
-            'timestamp': time.time()
-        }
+            # Send update message to sanic
+            counter += 1
+            update_message = {
+                'type': 'update',
+                'data': f'Update #{counter} from overmind at {time.strftime("%H:%M:%S")}',
+                'timestamp': time.time()
+            }
 
-        try:
-            sanic_queue.put_nowait(update_message)
-        except Exception:  # pylint: disable=broad-exception-caught
-            # Queue might be full, just continue
-            pass
+            try:
+                sanic_queue.put_nowait(update_message)
+            except Exception:  # pylint: disable=broad-exception-caught
+                # Queue might be full, just continue
+                pass
 
-        # Wait for 1 second
-        time.sleep(1)
+            # Wait for 1 second
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Overmind process interrupted")
 
     print("Overmind process finished")
 
