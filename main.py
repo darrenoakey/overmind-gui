@@ -1,135 +1,180 @@
-"""Main orchestrator for overmindgui multi-process application."""
+#!/usr/bin/env python3
+# main.py
 
-import signal
+# -----------------------------------------------------------------------------
+# Suppress pkg_resources warning from tracerite/html
+# -----------------------------------------------------------------------------
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message="pkg_resources is deprecated as an API.*",
+    module="tracerite.html",
+)
+
+import argparse
+import asyncio
+import os
 import sys
-import unittest
-from multiprocessing import Process, Queue
 
-from config import AppConfig, find_free_port
-from process_sanic import sanic_main
-from process_overmind import overmind_main
-from process_frontend import frontend_main
+from sanic import Sanic, Websocket
+from sanic.response import html
+from sanic.server.protocols.websocket_protocol import WebSocketProtocol
 
+import webview
+from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 
-class OvermindOrchestrator:
-    """Orchestrates all processes and handles shutdown."""
+# -----------------------------------------------------------------------------
+# Defaults
+# -----------------------------------------------------------------------------
+DEFAULT_PORT = 8000
+HOST = "127.0.0.1"
 
-    def __init__(self):
-        self.processes = []
-        self.config = None
-        self.shutdown_requested = False
+# -----------------------------------------------------------------------------
+# App setup
+# -----------------------------------------------------------------------------
+app = Sanic("ShellApp")
+app.config.DEBUG = True
+app.config.AUTO_RELOAD = True
+app.config.UI_PORT = DEFAULT_PORT
 
-    def signal_handler(self, _signum, _frame):
-        """Handle SIGINT (Ctrl+C) for graceful shutdown."""
-        if self.shutdown_requested:
-            print("\nForced shutdown...")
-            sys.exit(1)
-
-        print("\nShutdown requested... sending stop messages")
-        self.shutdown_requested = True
-
-        if self.config:
-            # Send stop messages to all queues
-            try:
-                self.config.sanic_queue.put_nowait({'type': 'stop'})
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
-            try:
-                self.config.overmind_queue.put_nowait({'type': 'stop'})
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
-            try:
-                self.config.frontend_queue.put_nowait({'type': 'stop'})
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
-
-    def start_processes(self):
-        """Start all processes."""
-        # Find free port
-        port = find_free_port()
-        print(f"Using port: {port}")
-
-        # Create queues
-        sanic_queue = Queue()
-        overmind_queue = Queue()
-        frontend_queue = Queue()
-
-        # Create config
-        self.config = AppConfig(
-            port=port,
-            sanic_queue=sanic_queue,
-            overmind_queue=overmind_queue,
-            frontend_queue=frontend_queue
-        )
-
-        config_dict = self.config.to_dict()
-
-        # Start processes
-        sanic_process = Process(target=sanic_main, args=(config_dict,), name="sanic")
-        overmind_process = Process(target=overmind_main, args=(config_dict,), name="overmind")
-        frontend_process = Process(target=frontend_main, args=(config_dict,), name="frontend")
-
-        self.processes = [sanic_process, overmind_process, frontend_process]
-
-        print("Starting processes...")
-        for process in self.processes:
-            process.start()
-            print(f"Started {process.name} process (PID: {process.pid})")
-
-    def wait_for_processes(self):
-        """Wait for all processes to finish."""
-        try:
-            for process in self.processes:
-                process.join()
-        except KeyboardInterrupt:
-            # This shouldn't happen since we handle SIGINT
-            pass
-
-    def cleanup(self):
-        """Clean up any remaining processes."""
-        for process in self.processes:
-            if process.is_alive():
-                print(f"Terminating {process.name} process...")
-                process.terminate()
-                process.join(timeout=5)
-                if process.is_alive():
-                    print(f"Force killing {process.name} process...")
-                    process.kill()
+clients = set()
+app.ctx.tasks = []
 
 
-def main():
-    """Main entry point."""
-    orchestrator = OvermindOrchestrator()
+# -----------------------------------------------------------------------------
+# HTTP & WebSocket handlers
+# -----------------------------------------------------------------------------
+@app.route("/")
+async def index(request):
+    return html(
+        f"""<!DOCTYPE html>
+<html>
+  <head><title>Sanic Shell</title></head>
+  <body>
+    <h1>Messages (port {app.config.UI_PORT})</h1>
+    <ul id="messages"></ul>
+    <script>
+      const ws = new WebSocket(`ws://${{window.location.host}}/ws`);
+      ws.onmessage = e => {{
+        const li = document.createElement("li");
+        li.textContent = e.data;
+        document.getElementById("messages").appendChild(li);
+      }};
+      window.onbeforeunload = () => ws.close();
+    </script>
+  </body>
+</html>"""
+    )
 
-    # Set up signal handler
-    signal.signal(signal.SIGINT, orchestrator.signal_handler)
 
+@app.websocket("/ws")
+async def websocket_handler(request, ws: Websocket):
+    clients.add(ws)
     try:
-        orchestrator.start_processes()
-        print("All processes started. Press Ctrl+C to shutdown.")
-        orchestrator.wait_for_processes()
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"Error: {e}")
+        async for _ in ws:
+            pass
+    except (ConnectionClosedOK, ConnectionClosedError, asyncio.CancelledError):
+        ...
     finally:
-        orchestrator.cleanup()
-        print("Shutdown complete.")
+        clients.discard(ws)
 
 
-class TestMain(unittest.TestCase):
-    """Test cases for main orchestrator."""
+# -----------------------------------------------------------------------------
+# Lifecycle hooks
+# -----------------------------------------------------------------------------
+@app.listener("before_server_start")
+async def setup(app, loop):
+    app.ctx.running = True
+    # start ticker + watcher
+    t1 = loop.create_task(tick_worker(app))
+    t2 = loop.create_task(process_watcher(app))
+    app.ctx.tasks.extend([t1, t2])
 
-    def test_orchestrator_creation(self):
-        """Test that orchestrator can be created."""
-        orchestrator = OvermindOrchestrator()
-        self.assertIsNotNone(orchestrator)
-        self.assertEqual(len(orchestrator.processes), 0)
-        self.assertFalse(orchestrator.shutdown_requested)
 
-    def test_signal_handler_sets_flag(self):
-        """Test that signal handler sets shutdown flag."""
-        orchestrator = OvermindOrchestrator()
-        orchestrator.signal_handler(signal.SIGINT, None)
-        self.assertTrue(orchestrator.shutdown_requested)
+@app.listener("before_server_stop")
+async def cleanup(app, loop):
+    # signal tasks to stop
+    app.ctx.running = False
+    # cancel & await them
+    for t in app.ctx.tasks:
+        t.cancel()
+    await asyncio.gather(*app.ctx.tasks, return_exceptions=True)
+    app.ctx.tasks.clear()
+    # remove any leftover clients
+    clients.clear()
+
+
+# -----------------------------------------------------------------------------
+# Background tasks
+# -----------------------------------------------------------------------------
+async def tick_worker(app):
+    count = 0
+    while app.ctx.running:
+        for ws in list(clients):
+            try:
+                await ws.send(f"tick {count}")
+            except Exception:
+                pass
+        count += 1
+        await asyncio.sleep(1)
+
+
+async def process_watcher(app):
+    port = app.config.UI_PORT
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        __file__,
+        "--ui",
+        "--port",
+        str(port),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        cwd=os.getcwd(),
+    )
+    try:
+        while app.ctx.running and proc.returncode is None:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            print(f"[UI] {line.decode().rstrip()}", file=sys.stdout)
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+        await proc.wait()
+    if app.ctx.running:
+        app.stop()
+
+
+# -----------------------------------------------------------------------------
+# UI‑only launcher
+# -----------------------------------------------------------------------------
+def launch_ui(port: int):
+    webview.create_window("Sanic Shell", f"http://localhost:{port}")
+    webview.start()
+
+
+# -----------------------------------------------------------------------------
+# Entrypoint
+# -----------------------------------------------------------------------------
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ui", action="store_true", help="UI‑only mode")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port")
+    args = parser.parse_args()
+
+    app.config.UI_PORT = args.port
+
+    if args.ui:
+        launch_ui(args.port)
+    else:
+        app.run(
+            host=HOST,
+            port=args.port,
+            protocol=WebSocketProtocol,
+            debug=True,
+            auto_reload=True,
+        )
 
 
 if __name__ == "__main__":
