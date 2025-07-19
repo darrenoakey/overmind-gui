@@ -59,7 +59,7 @@ app.ctx.tasks = []
 
 
 # -----------------------------------------------------------------------------
-# Background tasks and callbacks
+# Background task callbacks
 # -----------------------------------------------------------------------------
 def handle_output_line(line: str, app_instance):
     """Handle new output line from overmind"""
@@ -86,45 +86,11 @@ def handle_status_update(status_updates: dict, app_instance):
     }))
 
 
-async def periodic_status_update(app_instance):
-    """Periodically check and broadcast status updates"""
-    await asyncio.sleep(10)  # Wait for initial startup
-
-    while app_instance.ctx.running:
-        try:
-            if app_instance.ctx.overmind_controller:
-                # Force a status check
-                status_output = await app_instance.ctx.overmind_controller.get_status()
-                if status_output:
-                    status_updates = app_instance.ctx.overmind_controller.parse_status_output(
-                        status_output
-                    )
-                    if status_updates:
-                        handle_status_update(status_updates, app_instance)
-        except (OSError, subprocess.SubprocessError) as e:
-            print(f"Error in periodic status update: {e}")
-
-        # Wait 30 seconds before next check
-        await asyncio.sleep(30)
-
-
-async def output_broadcaster(app_instance):
-    """Broadcast combined output to new clients"""
-    while app_instance.ctx.running:
-        await asyncio.sleep(5)  # Check every 5 seconds
-
-        # This task mainly exists to keep the event loop active
-        # Actual broadcasting happens in the WebSocket message handlers
-
-
 # -----------------------------------------------------------------------------
-# Lifecycle hooks
+# Background tasks
 # -----------------------------------------------------------------------------
-@app.listener("before_server_start")
-async def setup_app(app_instance, loop):
-    """Set up the application before server starts"""
-    app_instance.ctx.running = True
-
+async def overmind_task(app_instance):
+    """Run the overmind controller as a background task"""
     # Check for Procfile
     if not os.path.exists("Procfile"):
         print("WARNING: No Procfile found in current directory")
@@ -151,36 +117,90 @@ async def setup_app(app_instance, loop):
     else:
         print("Failed to start Overmind - continuing without it")
 
-    # Start background tasks
-    tasks = [
-        loop.create_task(periodic_status_update(app_instance)),
-        loop.create_task(output_broadcaster(app_instance))
-    ]
-    app_instance.ctx.tasks.extend(tasks)
+    # Keep running periodic status updates
+    await asyncio.sleep(10)  # Wait for initial startup
+
+    while app_instance.ctx.running:
+        try:
+            if app_instance.ctx.overmind_controller:
+                # Force a status check
+                status_output = await app_instance.ctx.overmind_controller.get_status()
+                if status_output:
+                    status_updates = app_instance.ctx.overmind_controller.parse_status_output(
+                        status_output
+                    )
+                    if status_updates:
+                        handle_status_update(status_updates, app_instance)
+        except (OSError, subprocess.SubprocessError) as e:
+            print(f"Error in periodic status update: {e}")
+
+        # Wait 30 seconds before next check
+        await asyncio.sleep(30)
+
+
+async def ui_launcher_task(app_instance):
+    """Launch the UI subprocess"""
+    port = app_instance.config.UI_PORT
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        __file__,
+        "--ui",
+        "--port",
+        str(port),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        cwd=os.getcwd(),
+    )
+    try:
+        while app_instance.ctx.running and proc.returncode is None:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            print(f"[UI] {line.decode().rstrip()}", file=sys.stdout)
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+        await proc.wait()
+    if app_instance.ctx.running:
+        app_instance.stop()
+
+
+# -----------------------------------------------------------------------------
+# Lifecycle hooks
+# -----------------------------------------------------------------------------
+@app.listener("before_server_start")
+async def setup(app_instance, loop):
+    """Set up the application before server starts"""
+    app_instance.ctx.running = True
+
+    # Start overmind controller task
+    t1 = loop.create_task(overmind_task(app_instance))
+
+    # Start UI launcher task
+    t2 = loop.create_task(ui_launcher_task(app_instance))
+
+    app_instance.ctx.tasks.extend([t1, t2])
 
 
 @app.listener("before_server_stop")
-async def cleanup_app(app_instance, _loop):
+async def cleanup(app_instance, _loop):
     """Clean up resources before server stops"""
+    # signal tasks to stop
     app_instance.ctx.running = False
 
     # Stop overmind controller
     if app_instance.ctx.overmind_controller:
         await app_instance.ctx.overmind_controller.stop()
 
-    # Cancel background tasks
-    for task in app_instance.ctx.tasks:
-        task.cancel()
-
-    if app_instance.ctx.tasks:
-        await asyncio.gather(*app_instance.ctx.tasks, return_exceptions=True)
-
+    # cancel & await tasks
+    for t in app_instance.ctx.tasks:
+        t.cancel()
+    await asyncio.gather(*app_instance.ctx.tasks, return_exceptions=True)
     app_instance.ctx.tasks.clear()
-    print("Cleanup completed")
 
 
 # -----------------------------------------------------------------------------
-# UI launcher
+# UI‑only launcher
 # -----------------------------------------------------------------------------
 def launch_ui(port: int):
     """Launch the desktop UI using webview"""
@@ -195,78 +215,52 @@ def launch_ui(port: int):
 
 
 # -----------------------------------------------------------------------------
-# Main entry point
+# Entrypoint
 # -----------------------------------------------------------------------------
 def main():
     """Main entry point for the application"""
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(
-        description="Overmind GUI - Web-based process management interface",
-        allow_abbrev=False
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ui", action="store_true", help="UI‑only mode")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port")
+    args = parser.parse_args()
 
-    parser.add_argument("--ui", action="store_true",
-                       help="Launch desktop UI mode (PyWebView)")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT,
-                       help=f"Port to run on (default: {DEFAULT_PORT})")
-    parser.add_argument("--host", type=str, default=HOST,
-                       help=f"Host to bind to (default: {HOST})")
-    parser.add_argument("--no-browser", action="store_true",
-                       help="Don't open browser automatically")
-
-    # Parse known args, everything else could be passed to overmind
-    args, unknown_args = parser.parse_known_args()
-
-    if unknown_args:
-        print(f"Note: Unknown arguments will be ignored: {' '.join(unknown_args)}")
-
-    # Set configuration
     app.config.UI_PORT = args.port
 
-    # Check for Procfile
-    if not os.path.exists("Procfile"):
-        print("ERROR: No Procfile found in current directory")
-        print("Please run this application from a directory containing a Procfile")
-        return 1
-
-    # Check if overmind is available
-    try:
-        result = subprocess.run(["overmind", "--version"],
-                              capture_output=True, check=True)
-        print(f"Found overmind: {result.stdout.decode().strip()}")
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print("WARNING: overmind not found or not working")
-        print("Please install overmind: brew install overmind")
-        print("Continuing anyway - GUI will work but process management will be limited")
-
-    print(f"Starting Overmind GUI on {args.host}:{args.port}")
-    print("Press Ctrl+C to stop")
-
     if args.ui:
-        # Launch desktop UI
-        print("Launching desktop application...")
         launch_ui(args.port)
+        return 0
     else:
-        # Run web server
-        if not args.no_browser:
-            print(f"Open your browser to: http://{args.host}:{args.port}")
+        # Setup routes
+        setup_static_routes(app)
+        app.websocket("/ws")(websocket_handler)
 
-        try:
-            app.run(
-                host=args.host,
-                port=args.port,
-                protocol=WebSocketProtocol,
-                debug=True,
-                auto_reload=True,
-                access_log=False  # Reduce noise
-            )
-        except KeyboardInterrupt:
-            print("\nShutting down...")
-        except (OSError, RuntimeError) as e:
-            print(f"Error starting server: {e}")
+        # Check for Procfile
+        if not os.path.exists("Procfile"):
+            print("ERROR: No Procfile found in current directory")
+            print("Please run this application from a directory containing a Procfile")
             return 1
 
-    return 0
+        # Check if overmind is available
+        try:
+            result = subprocess.run(["overmind", "--version"],
+                                  capture_output=True, check=True)
+            print(f"Found overmind: {result.stdout.decode().strip()}")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("WARNING: overmind not found or not working")
+            print("Please install overmind: brew install overmind")
+            print("Continuing anyway - GUI will work but process management will be limited")
+
+        print(f"Starting Overmind GUI on {HOST}:{args.port}")
+        print("Press Ctrl+C to stop")
+
+        app.run(
+            host=HOST,
+            port=args.port,
+            protocol=WebSocketProtocol,
+            debug=True,
+            auto_reload=True,
+        )
+        return 0
 
 
 # -----------------------------------------------------------------------------
@@ -303,15 +297,5 @@ class TestOvermindGui(unittest.TestCase):
         self.assertTrue(callable(launch_ui))
 
 
-def setup_routes_for_app():
-    """Setup routes for the app - only called when running as main"""
-    setup_static_routes(app)
-    # WebSocket route
-    app.websocket("/ws")(websocket_handler)
-
-
 if __name__ == "__main__":
-    # Only setup routes when running as main script
-    setup_routes_for_app()
-    EXIT_CODE = main()
-    sys.exit(EXIT_CODE)
+    main()
