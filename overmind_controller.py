@@ -7,6 +7,7 @@ import os
 import asyncio
 import subprocess
 import unittest
+import signal
 from typing import Optional, Callable, Dict, Any
 
 
@@ -45,7 +46,6 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
             'CLICOLOR_FORCE': '1',
             'TERM': 'xterm-256color',
             'COLORTERM': 'truecolor',
-            # Some programs check NO_COLOR - make sure it's not set
         })
         # Remove NO_COLOR if it exists
         env.pop('NO_COLOR', None)
@@ -71,10 +71,14 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
 
         try:
             # Build overmind start command with additional arguments
-            cmd = ["overmind", "start", "--any-can-die"] + self.overmind_args
+            # Add --no-port to prevent port conflicts and force color output
+            cmd = ["overmind", "start", "--any-can-die", "--no-port"] + self.overmind_args
 
             # Get environment with color forcing
             env = self.get_colored_env()
+            force_color = env.get('FORCE_COLOR')
+            term = env.get('TERM')
+            print(f"Starting overmind with env: FORCE_COLOR={force_color}, TERM={term}")
 
             # Start overmind process with color-forcing environment
             self.process = await asyncio.create_subprocess_exec(
@@ -86,6 +90,7 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
             )
 
             self.running = True
+            print(f"Overmind process started with PID: {self.process.pid}")
 
             # Start monitoring tasks
             self._output_task = asyncio.create_task(self._read_output())
@@ -100,6 +105,7 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
     async def stop(self):
         """Stop overmind and all monitoring tasks"""
         self.running = False
+        print("Stopping overmind controller...")
 
         # Cancel monitoring tasks
         if self._output_task:
@@ -116,15 +122,24 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
             except asyncio.CancelledError:
                 pass
 
-        # Terminate overmind process
+        # Gracefully terminate overmind process
         if self.process:
             try:
-                self.process.terminate()
-                await asyncio.wait_for(self.process.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                self.process.kill()
-                await self.process.wait()
-            except (OSError, subprocess.SubprocessError) as e:
+                print(f"Terminating overmind process (PID: {self.process.pid})")
+
+                # First try graceful shutdown with SIGTERM
+                self.process.send_signal(signal.SIGTERM)
+
+                # Wait up to 10 seconds for graceful shutdown
+                try:
+                    await asyncio.wait_for(self.process.wait(), timeout=10)
+                    print("Overmind shut down gracefully")
+                except asyncio.TimeoutError:
+                    print("Overmind didn't shut down gracefully, sending SIGKILL")
+                    self.process.kill()
+                    await self.process.wait()
+
+            except (OSError, subprocess.SubprocessError, ProcessLookupError) as e:
                 print(f"Error stopping overmind: {e}")
             finally:
                 self.process = None
@@ -221,6 +236,10 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
                 except UnicodeDecodeError:
                     # Fallback to latin-1 if utf-8 fails
                     line_str = line.decode('latin-1', errors='replace').rstrip('\n')
+
+                # Debug: Show ANSI sequences that are being received
+                if '\x1b[' in line_str:
+                    print(f"DEBUG: ANSI found in line: {repr(line_str)}")
 
                 if line_str and self.output_callback:
                     self.output_callback(line_str)

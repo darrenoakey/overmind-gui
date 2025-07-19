@@ -17,6 +17,7 @@ import subprocess
 import sys
 import unittest
 import warnings
+import signal
 
 from sanic import Sanic
 from sanic.server.protocols.websocket_protocol import WebSocketProtocol
@@ -172,12 +173,28 @@ async def ui_launcher_task(app_instance):
 
 
 # -----------------------------------------------------------------------------
+# Signal handling for graceful shutdown
+# -----------------------------------------------------------------------------
+def setup_signal_handlers(app_instance):
+    """Setup signal handlers for graceful shutdown"""
+    def signal_handler(sig, _frame):
+        print(f"\nReceived signal {sig}, shutting down gracefully...")
+        app_instance.stop()
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+
+# -----------------------------------------------------------------------------
 # Lifecycle hooks
 # -----------------------------------------------------------------------------
 @app.listener("before_server_start")
 async def setup(app_instance, loop):
     """Set up the application before server starts"""
     app_instance.ctx.running = True
+
+    # Setup signal handlers
+    setup_signal_handlers(app_instance)
 
     # Start overmind controller task
     t1 = loop.create_task(overmind_task(app_instance))
@@ -191,18 +208,22 @@ async def setup(app_instance, loop):
 @app.listener("before_server_stop")
 async def cleanup(app_instance, _loop):
     """Clean up resources before server stops"""
+    print("Starting cleanup...")
     # signal tasks to stop
     app_instance.ctx.running = False
 
-    # Stop overmind controller
+    # Stop overmind controller first
     if app_instance.ctx.overmind_controller:
+        print("Stopping overmind controller...")
         await app_instance.ctx.overmind_controller.stop()
 
     # cancel & await tasks
+    print("Cancelling background tasks...")
     for t in app_instance.ctx.tasks:
         t.cancel()
     await asyncio.gather(*app_instance.ctx.tasks, return_exceptions=True)
     app_instance.ctx.tasks.clear()
+    print("Cleanup completed")
 
 
 # -----------------------------------------------------------------------------
@@ -255,13 +276,20 @@ def main():
     print(f"Starting Overmind GUI on {HOST}:{args.port}")
     print("Press Ctrl+C to stop")
 
-    app.run(
-        host=HOST,
-        port=args.port,
-        protocol=WebSocketProtocol,
-        debug=True,
-        auto_reload=True,
-    )
+    try:
+        app.run(
+            host=HOST,
+            port=args.port,
+            protocol=WebSocketProtocol,
+            debug=True,
+            auto_reload=True,
+        )
+    except KeyboardInterrupt:
+        print("\nShutdown complete")
+    except (OSError, RuntimeError) as e:
+        print(f"Error: {e}")
+        return 1
+
     return 0
 
 

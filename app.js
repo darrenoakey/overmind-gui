@@ -5,8 +5,9 @@ const { createRoot } = ReactDOM;
 // WebSocket connection
 let ws = null;
 
-// ANSI color mapping
+// ANSI color mapping - comprehensive color support
 const ansiColors = {
+    // Standard colors (30-37)
     '30': '#000000', // black
     '31': '#cd0000', // red
     '32': '#00cd00', // green
@@ -15,6 +16,8 @@ const ansiColors = {
     '35': '#cd00cd', // magenta
     '36': '#00cdcd', // cyan
     '37': '#e5e5e5', // white
+    
+    // Bright colors (90-97)
     '90': '#7f7f7f', // bright black (gray)
     '91': '#ff0000', // bright red
     '92': '#00ff00', // bright green
@@ -26,6 +29,7 @@ const ansiColors = {
 };
 
 const ansiBgColors = {
+    // Standard background colors (40-47)
     '40': '#000000', // black
     '41': '#cd0000', // red
     '42': '#00cd00', // green
@@ -34,6 +38,8 @@ const ansiBgColors = {
     '45': '#cd00cd', // magenta
     '46': '#00cdcd', // cyan
     '47': '#e5e5e5', // white
+    
+    // Bright background colors (100-107)
     '100': '#7f7f7f', // bright black (gray)
     '101': '#ff0000', // bright red
     '102': '#00ff00', // bright green
@@ -48,33 +54,64 @@ const ansiBgColors = {
 const ansiToHtml = (text) => {
     let html = text;
     
-    // Handle reset codes
-    html = html.replace(/\x1b\[0m/g, '</span>');
-    html = html.replace(/\x1b\[m/g, '</span>');
+    // Debug: Log when we encounter ANSI sequences
+    if (text.includes('\x1b[') || text.includes('\u001b[')) {
+        console.log('ANSI Debug - Original text:', JSON.stringify(text));
+    }
     
-    // Handle color codes
-    html = html.replace(/\x1b\[([0-9;]*)m/g, (match, codes) => {
+    // Handle both \x1b and \u001b escape sequences
+    const ansiRegex = /[\x1b\u001b]\[([0-9;]*)m/g;
+    
+    // First, replace reset codes
+    html = html.replace(/[\x1b\u001b]\[0*m/g, '</span>');
+    
+    // Handle other codes
+    html = html.replace(ansiRegex, (match, codes) => {
         if (!codes) return '</span>';
         
-        const codeList = codes.split(';');
+        const codeList = codes.split(';').filter(c => c !== '');
         let styles = [];
         
+        console.log('ANSI Debug - Found codes:', codeList);
+        
         for (const code of codeList) {
+            const codeNum = parseInt(code, 10);
+            
             if (ansiColors[code]) {
                 styles.push(`color: ${ansiColors[code]}`);
+                console.log(`ANSI Debug - Applied color ${code}: ${ansiColors[code]}`);
             } else if (ansiBgColors[code]) {
                 styles.push(`background-color: ${ansiBgColors[code]}`);
-            } else if (code === '1') {
+                console.log(`ANSI Debug - Applied bg color ${code}: ${ansiBgColors[code]}`);
+            } else if (codeNum === 1) {
                 styles.push('font-weight: bold');
-            } else if (code === '3') {
+            } else if (codeNum === 3) {
                 styles.push('font-style: italic');
-            } else if (code === '4') {
+            } else if (codeNum === 4) {
                 styles.push('text-decoration: underline');
+            } else if (codeNum === 22) {
+                styles.push('font-weight: normal');
+            } else if (codeNum === 23) {
+                styles.push('font-style: normal');
+            } else if (codeNum === 24) {
+                styles.push('text-decoration: none');
+            } else {
+                console.log(`ANSI Debug - Unknown code: ${code}`);
             }
         }
         
-        return styles.length > 0 ? `<span style="${styles.join('; ')}">` : '';
+        if (styles.length > 0) {
+            const result = `<span style="${styles.join('; ')}">`;
+            console.log('ANSI Debug - Generated span:', result);
+            return result;
+        }
+        
+        return '';
     });
+    
+    if (text.includes('\x1b[') || text.includes('\u001b[')) {
+        console.log('ANSI Debug - Final HTML:', html);
+    }
     
     return html;
 };
@@ -245,7 +282,7 @@ function App() {
     
     // Strip ANSI codes for searching (but keep them for display)
     const stripAnsiCodes = (text) => {
-        return text.replace(/\x1b\[[0-9;]*m/g, '');
+        return text.replace(/[\x1b\u001b]\[[0-9;]*m/g, '');
     };
     
     // Filter output based on filter text and selected processes
