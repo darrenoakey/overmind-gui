@@ -18,6 +18,8 @@ import sys
 import unittest
 import warnings
 import signal
+import threading
+import time
 
 from sanic import Sanic
 from sanic.server.protocols.websocket_protocol import WebSocketProtocol
@@ -60,6 +62,10 @@ app.ctx.overmind_failed = False
 app.ctx.overmind_error = ""
 app.ctx.tasks = []
 app.ctx.shutdown_initiated = False
+app.ctx.shutdown_complete = False
+
+# Global shutdown event for coordination
+shutdown_event = asyncio.Event()
 
 # -----------------------------------------------------------------------------
 # Setup routes
@@ -101,100 +107,126 @@ def handle_status_update(status_updates: dict, app_instance):
 # -----------------------------------------------------------------------------
 async def overmind_task(app_instance):
     """Run the overmind controller as a background task"""
-    # Check for Procfile
-    if not os.path.exists("Procfile"):
-        print("WARNING: No Procfile found in current directory")
-        app_instance.ctx.overmind_failed = True
-        app_instance.ctx.overmind_error = "No Procfile found in current directory"
-        return
-
-    # Load processes from Procfile
     try:
-        process_names = app_instance.ctx.process_manager.load_procfile()
-        print(f"Loaded {len(process_names)} processes: {', '.join(process_names)}")
-    except (FileNotFoundError, OSError) as e:
-        print(f"Error loading Procfile: {e}")
-        app_instance.ctx.overmind_failed = True
-        app_instance.ctx.overmind_error = f"Error loading Procfile: {e}"
-        return
+        # Check for Procfile
+        if not os.path.exists("Procfile"):
+            print("WARNING: No Procfile found in current directory")
+            app_instance.ctx.overmind_failed = True
+            app_instance.ctx.overmind_error = "No Procfile found in current directory"
+            return
 
-    # Initialize overmind controller with callbacks
-    app_instance.ctx.overmind_controller = OvermindController(
-        output_callback=lambda line: handle_output_line(line, app_instance),
-        status_callback=lambda updates: handle_status_update(updates, app_instance)
-    )
-
-    # Start overmind
-    success = await app_instance.ctx.overmind_controller.start()
-    if success:
-        print("Overmind started successfully")
-        # Broadcast success to any connected clients
-        asyncio.create_task(websocket_manager.broadcast("overmind_status", {
-            "status": "running",
-            "error": None
-        }))
-    else:
-        error_msg = "Failed to start Overmind"
-        # Check for common issues
-        if os.path.exists(".overmind.sock"):
-            error_msg += " (socket file exists - another instance may be running)"
-        print(error_msg)
-        app_instance.ctx.overmind_failed = True
-        app_instance.ctx.overmind_error = error_msg
-        
-        # Broadcast failure to any connected clients
-        asyncio.create_task(websocket_manager.broadcast("overmind_status", {
-            "status": "failed",
-            "error": error_msg
-        }))
-        return
-
-    # Keep running periodic status updates
-    await asyncio.sleep(10)  # Wait for initial startup
-
-    while app_instance.ctx.running:
+        # Load processes from Procfile
         try:
-            if app_instance.ctx.overmind_controller:
-                # Force a status check
-                status_output = await app_instance.ctx.overmind_controller.get_status()
-                if status_output:
-                    status_updates = app_instance.ctx.overmind_controller.parse_status_output(
-                        status_output
-                    )
-                    if status_updates:
-                        handle_status_update(status_updates, app_instance)
-        except (OSError, subprocess.SubprocessError) as e:
-            print(f"Error in periodic status update: {e}")
+            process_names = app_instance.ctx.process_manager.load_procfile()
+            print(f"Loaded {len(process_names)} processes: {', '.join(process_names)}")
+        except (FileNotFoundError, OSError) as e:
+            print(f"Error loading Procfile: {e}")
+            app_instance.ctx.overmind_failed = True
+            app_instance.ctx.overmind_error = f"Error loading Procfile: {e}"
+            return
 
-        # Wait 30 seconds before next check
-        await asyncio.sleep(30)
+        # Initialize overmind controller with callbacks
+        app_instance.ctx.overmind_controller = OvermindController(
+            output_callback=lambda line: handle_output_line(line, app_instance),
+            status_callback=lambda updates: handle_status_update(updates, app_instance)
+        )
+
+        # Start overmind
+        success = await app_instance.ctx.overmind_controller.start()
+        if success:
+            print("Overmind started successfully")
+            # Broadcast success to any connected clients
+            asyncio.create_task(websocket_manager.broadcast("overmind_status", {
+                "status": "running",
+                "error": None
+            }))
+        else:
+            error_msg = "Failed to start Overmind"
+            # Check for common issues
+            if os.path.exists(".overmind.sock"):
+                error_msg += " (socket file exists - another instance may be running)"
+            print(error_msg)
+            app_instance.ctx.overmind_failed = True
+            app_instance.ctx.overmind_error = error_msg
+
+            # Broadcast failure to any connected clients
+            asyncio.create_task(websocket_manager.broadcast("overmind_status", {
+                "status": "failed",
+                "error": error_msg
+            }))
+            return
+
+        # Keep running periodic status updates
+        await asyncio.sleep(10)  # Wait for initial startup
+
+        while app_instance.ctx.running and not shutdown_event.is_set():
+            try:
+                if app_instance.ctx.overmind_controller:
+                    # Force a status check
+                    status_output = await app_instance.ctx.overmind_controller.get_status()
+                    if status_output:
+                        status_updates = app_instance.ctx.overmind_controller.parse_status_output(
+                            status_output
+                        )
+                        if status_updates:
+                            handle_status_update(status_updates, app_instance)
+            except (OSError, subprocess.SubprocessError) as e:
+                print(f"Error in periodic status update: {e}")
+
+            # Wait 30 seconds before next check, but check shutdown event more frequently
+            for _ in range(30):
+                if shutdown_event.is_set() or not app_instance.ctx.running:
+                    break
+                await asyncio.sleep(1)
+
+    except asyncio.CancelledError:
+        print("Overmind task cancelled")
+    except RuntimeError as e:
+        print(f"Runtime error in overmind task: {e}")
+    finally:
+        print("Overmind task completed")
 
 
 async def ui_launcher_task(app_instance):
     """Launch the UI subprocess"""
-    port = app_instance.config.UI_PORT
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable,
-        __file__,
-        "--ui",
-        "--port",
-        str(port),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        cwd=os.getcwd(),
-    )
+    proc = None
     try:
-        while app_instance.ctx.running and proc.returncode is None:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            print(f"[UI] {line.decode().rstrip()}", file=sys.stdout)
+        port = app_instance.config.UI_PORT
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            __file__,
+            "--ui",
+            "--port",
+            str(port),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=os.getcwd(),
+        )
+
+        while app_instance.ctx.running and proc.returncode is None and not shutdown_event.is_set():
+            try:
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=1.0)
+                if not line:
+                    break
+                print(f"[UI] {line.decode().rstrip()}", file=sys.stdout)
+            except asyncio.TimeoutError:
+                continue
+
+    except asyncio.CancelledError:
+        print("UI launcher task cancelled")
+    except RuntimeError as e:
+        print(f"Runtime error in UI launcher task: {e}")
     finally:
-        if proc.returncode is None:
+        if proc is not None and proc.returncode is None:
             proc.kill()
-        await proc.wait()
-    if app_instance.ctx.running:
-        app_instance.stop()
+            await proc.wait()
+        print("UI launcher task completed")
+
+        # If UI closes, initiate shutdown
+        if app_instance.ctx.running:
+            print("UI closed, initiating shutdown...")
+            shutdown_event.set()
+            app_instance.stop()
 
 
 # -----------------------------------------------------------------------------
@@ -206,10 +238,21 @@ def setup_signal_handlers(app_instance):
         if not app_instance.ctx.shutdown_initiated:
             print(f"\nReceived signal {sig}, shutting down gracefully...")
             app_instance.ctx.shutdown_initiated = True
+            shutdown_event.set()
             app_instance.stop()
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
+
+# -----------------------------------------------------------------------------
+# Window close handler for webview
+# -----------------------------------------------------------------------------
+def on_window_closing():
+    """Called when webview window is closing"""
+    print("Window closing, initiating shutdown...")
+    shutdown_event.set()
+    return True  # Allow window to close
 
 
 # -----------------------------------------------------------------------------
@@ -235,42 +278,82 @@ async def setup(app_instance, loop):
 @app.listener("before_server_stop")
 async def cleanup(app_instance, _loop):
     """Clean up resources before server stops"""
-    if app_instance.ctx.shutdown_initiated:
-        return  # Already cleaning up
-    
+    if app_instance.ctx.shutdown_complete:
+        return  # Already cleaned up
+
     print("Starting cleanup...")
     app_instance.ctx.shutdown_initiated = True
-    # signal tasks to stop
     app_instance.ctx.running = False
+    shutdown_event.set()
 
     # Stop overmind controller first and WAIT for it
     if app_instance.ctx.overmind_controller:
         print("Stopping overmind controller...")
-        await app_instance.ctx.overmind_controller.stop()
-        print("Overmind controller stopped")
+        try:
+            await asyncio.wait_for(
+                app_instance.ctx.overmind_controller.stop(),
+                timeout=20.0
+            )
+            print("Overmind controller stopped")
+        except asyncio.TimeoutError:
+            print("Timeout waiting for overmind controller to stop")
+        except RuntimeError as e:
+            print(f"Runtime error stopping overmind controller: {e}")
 
-    # cancel & await tasks
+    # Cancel and await tasks
     print("Cancelling background tasks...")
     for t in app_instance.ctx.tasks:
-        t.cancel()
-    await asyncio.gather(*app_instance.ctx.tasks, return_exceptions=True)
+        if not t.done():
+            t.cancel()
+
+    # Wait for tasks to complete with timeout
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*app_instance.ctx.tasks, return_exceptions=True),
+            timeout=10.0
+        )
+    except asyncio.TimeoutError:
+        print("Timeout waiting for tasks to complete")
+
     app_instance.ctx.tasks.clear()
+    app_instance.ctx.shutdown_complete = True
     print("Cleanup completed")
 
 
 # -----------------------------------------------------------------------------
-# UI‑only launcher
+# UI-only launcher
 # -----------------------------------------------------------------------------
 def launch_ui(port: int):
     """Launch the desktop UI using webview"""
+    def shutdown_monitor():
+        """Monitor shutdown event and close webview"""
+        while True:
+            if shutdown_event.is_set():
+                print("Shutdown event detected, closing webview...")
+                webview.windows[0].destroy()
+                break
+            time.sleep(0.5)
+
+    # Start shutdown monitor in background thread
+    monitor_thread = threading.Thread(target=shutdown_monitor, daemon=True)
+    monitor_thread.start()
+
     webview.create_window(
         "Overmind GUI",
         f"http://localhost:{port}",
         width=1400,
         height=900,
-        min_size=(800, 600)
+        min_size=(800, 600),
+        on_top=False
     )
-    webview.start()
+
+    # Set window closing handler
+    webview.windows[0].events.closing += on_window_closing
+
+    try:
+        webview.start()
+    finally:
+        shutdown_event.set()
 
 
 # -----------------------------------------------------------------------------
@@ -279,7 +362,7 @@ def launch_ui(port: int):
 def main():
     """Main entry point for the application"""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ui", action="store_true", help="UI‑only mode")
+    parser.add_argument("--ui", action="store_true", help="UI-only mode")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port")
     args = parser.parse_args()
 
@@ -357,6 +440,10 @@ class TestOvermindGui(unittest.TestCase):
     def test_launch_ui_function_exists(self):
         """Test that launch_ui function is callable"""
         self.assertTrue(callable(launch_ui))
+
+    def test_shutdown_event_initialization(self):
+        """Test that shutdown event is properly initialized"""
+        self.assertIsInstance(shutdown_event, asyncio.Event)
 
 
 if __name__ == "__main__":

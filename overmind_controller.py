@@ -105,7 +105,7 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
 
             # Give overmind a moment to start
             await asyncio.sleep(2)
-            
+
             # Check if process is still running
             if self.process.returncode is not None:
                 print(f"Overmind process exited immediately with code: {self.process.returncode}")
@@ -125,7 +125,7 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
         """Stop overmind and all monitoring tasks"""
         if not self.running:
             return
-            
+
         self.running = False
         print("Stopping overmind controller...")
 
@@ -148,10 +148,10 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
         if self.process and self.process.returncode is None:
             try:
                 print(f"Sending SIGTERM to overmind process (PID: {self.process.pid})")
-                
+
                 # Send SIGTERM to overmind
                 self.process.send_signal(signal.SIGTERM)
-                
+
                 # Wait up to 15 seconds for graceful shutdown
                 try:
                     await asyncio.wait_for(self.process.wait(), timeout=15)
@@ -161,7 +161,7 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
                     self.process.kill()
                     await self.process.wait()
                     print("Overmind was force-killed")
-                    
+
             except (OSError, subprocess.SubprocessError, ProcessLookupError) as e:
                 print(f"Error stopping overmind: {e}")
             finally:

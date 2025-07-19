@@ -10,6 +10,10 @@
     --secondary-color: #6c757d;
     --gradient-start: #667eea;
     --gradient-end: #764ba2;
+    --paper-color: #faf8f5;
+    --paper-text: #2c2c2c;
+    --filter-bg: #eae8e3;
+    --status-bg: #e1ddd6;
 }
 
 * {
@@ -212,9 +216,9 @@ body {
 }
 
 .filters {
-    background: white;
+    background: var(--filter-bg);
     padding: 18px 30px;
-    border-bottom: 1px solid #e9ecef;
+    border-bottom: 1px solid #d4cfc4;
     display: flex;
     gap: 30px;
     align-items: center;
@@ -235,12 +239,12 @@ body {
 
 .filter-input {
     padding: 10px 16px;
-    border: 2px solid #e9ecef;
+    border: 2px solid #d4cfc4;
     border-radius: 8px;
     font-size: 14px;
     min-width: 220px;
     transition: all 0.2s ease;
-    background: #f8f9fa;
+    background: #f5f3f0;
 }
 
 .filter-input:focus {
@@ -253,14 +257,14 @@ body {
 .search-nav {
     display: flex;
     gap: 2px;
-    border: 2px solid #e9ecef;
+    border: 2px solid #d4cfc4;
     border-radius: 6px;
     overflow: hidden;
 }
 
 .search-btn {
     padding: 8px 12px;
-    background: #f8f9fa;
+    background: #f5f3f0;
     border: none;
     cursor: pointer;
     font-size: 14px;
@@ -269,11 +273,16 @@ body {
 }
 
 .search-btn:hover {
-    background: #e9ecef;
+    background: #ebe8e2;
 }
 
 .search-btn:active {
-    background: #dee2e6;
+    background: #ddd8d1;
+}
+
+.search-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .search-count {
@@ -281,7 +290,7 @@ body {
     color: #6c757d;
     align-self: center;
     padding: 0 8px;
-    background: #f8f9fa;
+    background: #f5f3f0;
     border-radius: 12px;
     min-width: 80px;
     text-align: center;
@@ -289,7 +298,7 @@ body {
 
 .output-container {
     flex: 1;
-    background: #1a1a1a;
+    background: var(--paper-color);
     position: relative;
     overflow: hidden;
 }
@@ -301,10 +310,10 @@ body {
     font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Source Code Pro', monospace;
     font-size: 14px;
     line-height: 1.2;
-    color: #f8f8f2;
+    color: var(--paper-text);
     white-space: pre-wrap;
     word-break: break-word;
-    background: linear-gradient(145deg, #1a1a1a, #0d1117);
+    background: var(--paper-color);
 }
 
 .output::-webkit-scrollbar {
@@ -312,16 +321,16 @@ body {
 }
 
 .output::-webkit-scrollbar-track {
-    background: #2d2d2d;
+    background: #e8e4dd;
 }
 
 .output::-webkit-scrollbar-thumb {
-    background: #555;
+    background: #beb8ad;
     border-radius: 6px;
 }
 
 .output::-webkit-scrollbar-thumb:hover {
-    background: #777;
+    background: #a39b8e;
 }
 
 .output-line {
@@ -333,8 +342,8 @@ body {
 }
 
 .output-line.highlight {
-    background-color: rgba(255, 193, 7, 0.3);
-    box-shadow: 0 0 10px rgba(255, 193, 7, 0.2);
+    background-color: rgba(255, 193, 7, 0.4);
+    box-shadow: 0 0 10px rgba(255, 193, 7, 0.3);
     animation: highlight-pulse 0.5s ease-in-out;
 }
 
@@ -349,8 +358,8 @@ body {
 }
 
 .footer {
-    background: linear-gradient(to right, #f8f9fa, #e9ecef);
-    border-top: 1px solid #dee2e6;
+    background: var(--status-bg);
+    border-top: 1px solid #d4cfc4;
     padding: 20px 30px;
     display: flex;
     justify-content: space-between;
