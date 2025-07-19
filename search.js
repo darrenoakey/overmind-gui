@@ -42,6 +42,8 @@ class SearchManager {
             if (this.currentSearchIndex < 0 || this.currentSearchIndex >= results.length) {
                 this.currentSearchIndex = 0;
             }
+            // Immediately scroll to the first result
+            this.scrollToCurrentResult();
         } else {
             this.currentSearchIndex = -1;
         }
@@ -108,6 +110,11 @@ class SearchManager {
     isLineHighlighted(lineIndex) {
         return this.searchResults.includes(lineIndex) && 
                this.searchResults[this.currentSearchIndex] === lineIndex;
+    }
+
+    // Check if a line contains search results (for general highlighting)
+    hasSearchMatch(lineIndex) {
+        return this.searchResults.includes(lineIndex);
     }
 
     // Clear search state

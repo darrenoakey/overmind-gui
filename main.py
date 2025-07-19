@@ -339,7 +339,7 @@ def launch_ui(port: int):
     monitor_thread.start()
 
     webview.create_window(
-        "Overmind GUI",
+        "Daz Overmind Gui",
         f"http://localhost:{port}",
         width=1400,
         height=900,

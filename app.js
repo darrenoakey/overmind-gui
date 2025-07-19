@@ -222,11 +222,12 @@ function App() {
         }
     };
     
-    // Clear search
+    // Clear search - NOW BINDS TO END like clicking new output
     const clearSearch = () => {
         searchManager.clearSearch();
         setSearchText('');
-        // Don't automatically turn boundToEnd back on when clearing search
+        setBoundToEnd(true); // NEW: clearing search binds us back to end
+        scrollToBottom(); // Immediately scroll to bottom
     };
     
     // Force scroll to bottom and turn on boundToEnd - Rule a
@@ -332,7 +333,8 @@ function App() {
                 onScroll: handleScroll,
                 boundToEnd: boundToEnd,
                 onScrollToBottom: scrollToBottom,
-                searchManager
+                searchManager,
+                searchTerm: searchText // Pass search term for highlighting
             })
         ),
         

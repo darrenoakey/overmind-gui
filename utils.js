@@ -142,6 +142,27 @@ const ansiToHtml = (text) => {
     return html;
 };
 
+// Highlight search terms in text while preserving ANSI formatting
+const highlightSearchInHtml = (html, searchTerm) => {
+    if (!searchTerm) return html;
+    
+    // Create a regex for the search term (case insensitive)
+    const searchRegex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    
+    // We need to be careful not to highlight inside HTML tags
+    // Split by HTML tags to process only text content
+    const parts = html.split(/(<[^>]*>)/);
+    
+    return parts.map(part => {
+        // If this part is an HTML tag, leave it unchanged
+        if (part.startsWith('<') && part.endsWith('>')) {
+            return part;
+        }
+        // Otherwise, highlight search terms in the text content
+        return part.replace(searchRegex, '<mark class="search-highlight">$1</mark>');
+    }).join('');
+};
+
 // Strip ANSI codes for searching (but keep them for display)
 const stripAnsiCodes = (text) => {
     return text.replace(/[\x1b\u001b]\[[0-9;]*m/g, '');
@@ -150,5 +171,6 @@ const stripAnsiCodes = (text) => {
 // Export for use in other files
 window.AnsiUtils = {
     ansiToHtml,
+    highlightSearchInHtml,
     stripAnsiCodes
 };

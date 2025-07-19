@@ -133,9 +133,9 @@ body {
 
 .process-button {
     position: relative;
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.08);
     backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 12px;
     padding: 8px 12px;
     cursor: pointer;
@@ -145,15 +145,15 @@ body {
     flex: 1;
     overflow: hidden;
     box-shadow: 
-        0 4px 8px rgba(0, 0, 0, 0.1),
-        inset 0 1px 0 rgba(255, 255, 255, 0.2);
+        0 2px 4px rgba(0, 0, 0, 0.05),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
     user-select: none;
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
-/* LED indicator on the left edge - bigger and brighter */
+/* LED indicator on the left edge - always bright and visible */
 .process-button::before {
     content: '';
     position: absolute;
@@ -163,7 +163,7 @@ body {
     height: 100%;
     border-radius: 12px 0 0 12px;
     transition: all 0.2s ease;
-    opacity: 0.3; /* Default dim state for unselected */
+    opacity: 1; /* Always visible */
 }
 
 /* LED colors based on status */
@@ -188,25 +188,21 @@ body {
     box-shadow: 0 0 12px rgba(255, 165, 0, 0.8);
 }
 
-/* Selected state - make LED bright and visible */
-.process-button.selected::before {
-    opacity: 1;
-}
-
 /* Hover effect - only opacity change, no movement */
 .process-button:hover {
-    opacity: 0.8;
-    background: rgba(255, 255, 255, 0.25);
-    border-color: rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.25);
+    transform: translateY(-1px);
 }
 
-/* Selected button styling */
+/* Selected button styling - much more obvious */
 .process-button.selected {
-    background: rgba(255, 255, 255, 0.3);
-    border-color: rgba(255, 255, 255, 0.4);
+    background: rgba(255, 255, 255, 0.35);
+    border-color: rgba(255, 255, 255, 0.5);
     box-shadow: 
-        0 4px 12px rgba(0, 123, 255, 0.2),
-        inset 0 1px 0 rgba(255, 255, 255, 0.4);
+        0 4px 12px rgba(0, 123, 255, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.5),
+        0 0 0 2px rgba(255, 255, 255, 0.2);
 }
 
 /* Active state for immediate feedback on click */
@@ -219,7 +215,7 @@ body {
     font-weight: 600;
     font-size: 13px;
     color: white;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5); /* Better shadow for non-embossed look */
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -233,34 +229,37 @@ body {
     overflow: hidden;
 }
 
+/* Smaller filter bar */
 .filters {
     background: var(--filter-bg);
-    padding: 18px 30px;
+    padding: 8px 20px; /* Much smaller padding */
     border-bottom: 1px solid #d4cfc4;
     display: flex;
-    gap: 30px;
+    gap: 20px;
     align-items: center;
     flex-wrap: wrap;
+    min-height: 45px; /* Smaller min height */
 }
 
 .filter-group {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px; /* Smaller gap */
 }
 
 .filter-group label {
     font-weight: 600;
     color: #495057;
-    font-size: 14px;
+    font-size: 13px; /* Smaller font */
 }
 
+/* Smaller filter inputs */
 .filter-input {
-    padding: 10px 16px;
+    padding: 6px 12px; /* Smaller padding */
     border: 2px solid #d4cfc4;
-    border-radius: 8px;
-    font-size: 14px;
-    min-width: 220px;
+    border-radius: 6px; /* Smaller border radius */
+    font-size: 13px; /* Smaller font */
+    min-width: 180px; /* Smaller width */
     transition: all 0.2s ease;
     background: #f5f3f0;
 }
@@ -268,24 +267,25 @@ body {
 .filter-input:focus {
     outline: none;
     border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(0,123,255,0.1);
+    box-shadow: 0 0 0 2px rgba(0,123,255,0.1); /* Smaller shadow */
     background: white;
 }
 
+/* Smaller search navigation */
 .search-nav {
     display: flex;
-    gap: 2px;
+    gap: 1px;
     border: 2px solid #d4cfc4;
-    border-radius: 6px;
+    border-radius: 4px; /* Smaller border radius */
     overflow: hidden;
 }
 
 .search-btn {
-    padding: 8px 12px;
+    padding: 6px 10px; /* Smaller padding */
     background: #f5f3f0;
     border: none;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13px; /* Smaller font */
     transition: background 0.2s ease;
     color: #495057;
 }
@@ -303,14 +303,15 @@ body {
     cursor: not-allowed;
 }
 
+/* Smaller search count */
 .search-count {
-    font-size: 13px;
+    font-size: 12px; /* Smaller font */
     color: #6c757d;
     align-self: center;
-    padding: 0 8px;
+    padding: 0 6px; /* Smaller padding */
     background: #f5f3f0;
-    border-radius: 12px;
-    min-width: 80px;
+    border-radius: 8px; /* Smaller border radius */
+    min-width: 60px; /* Smaller width */
     text-align: center;
 }
 
@@ -359,10 +360,18 @@ body {
     position: relative;
 }
 
+/* Improved search highlighting */
 .output-line.highlight {
     background-color: rgba(255, 193, 7, 0.4);
     box-shadow: 0 0 10px rgba(255, 193, 7, 0.3);
     animation: highlight-pulse 0.5s ease-in-out;
+}
+
+/* Current search result highlighting */
+.output-line.current-search-result {
+    background-color: rgba(255, 165, 0, 0.6);
+    box-shadow: 0 0 15px rgba(255, 165, 0, 0.5);
+    animation: current-highlight-pulse 1s ease-in-out;
 }
 
 @keyframes highlight-pulse {
@@ -371,63 +380,81 @@ body {
     100% { transform: scale(1); }
 }
 
+@keyframes current-highlight-pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.03); }
+    100% { transform: scale(1); }
+}
+
 .output-line.hidden {
     display: none;
 }
 
+/* Search term highlighting in text */
+.search-highlight {
+    background-color: rgba(255, 193, 7, 0.8);
+    color: #333;
+    padding: 1px 2px;
+    border-radius: 2px;
+    font-weight: bold;
+}
+
+/* Much smaller footer - status bar style */
 .footer {
     background: var(--status-bg);
     border-top: 1px solid #d4cfc4;
-    padding: 20px 30px;
+    padding: 6px 20px; /* Much smaller padding */
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 14px;
+    font-size: 12px; /* Smaller font */
     color: #6c757d;
     flex-shrink: 0;
-    min-height: 80px;
+    min-height: 32px; /* Much smaller height */
 }
 
 .stats {
     display: flex;
-    gap: 25px;
+    gap: 15px; /* Smaller gap */
     align-items: center;
 }
 
 .stats span {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 3px; /* Smaller gap */
     font-weight: 500;
 }
 
 .stats span::before {
     content: '●';
     color: var(--primary-color);
+    font-size: 10px; /* Smaller dot */
 }
 
 .action-buttons {
     display: flex;
-    gap: 12px;
+    gap: 6px; /* Smaller gap */
 }
 
+/* Smaller buttons */
 .btn {
-    padding: 12px 24px;
-    border: 2px solid transparent;
-    border-radius: 8px;
+    padding: 4px 8px; /* Much smaller padding */
+    border: 1px solid transparent; /* Thinner border */
+    border-radius: 4px; /* Smaller border radius */
     background: white;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 11px; /* Smaller font */
     font-weight: 600;
     transition: all 0.2s ease;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    min-height: 44px;
+    letter-spacing: 0.3px; /* Smaller letter spacing */
+    min-height: 24px; /* Much smaller height */
 }
 
 .btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    transform: translateY(-1px); /* Smaller movement */
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1); /* Smaller shadow */
 }
 
 .btn-primary {
@@ -441,15 +468,23 @@ body {
     border-color: #0056b3;
 }
 
-.btn-danger {
-    background: var(--danger-color);
-    border-color: var(--danger-color);
-    color: white;
+/* Remove danger styling from clear button - make it subtle */
+.btn-secondary {
+    background: #e9ecef;
+    border-color: #e9ecef;
+    color: #6c757d;
 }
 
-.btn-danger:hover {
-    background: #c82333;
-    border-color: #c82333;
+.btn-secondary:hover {
+    background: #dee2e6;
+    border-color: #dee2e6;
+}
+
+/* Small button variant */
+.btn-small {
+    padding: 3px 6px;
+    font-size: 10px;
+    min-height: 20px;
 }
 
 /* Context menu */
@@ -484,6 +519,24 @@ body {
     transform: translateX(3px);
 }
 
+/* Clear button styling */
+.btn-clear {
+    background: transparent;
+    border: 1px solid #dee2e6;
+    color: #6c757d;
+    padding: 4px 6px;
+    font-size: 12px;
+    border-radius: 3px;
+    min-height: auto;
+}
+
+.btn-clear:hover {
+    background: #f8f9fa;
+    color: #495057;
+    transform: none;
+    box-shadow: none;
+}
+
 /* Responsive design */
 @media (max-width: 1024px) {
     .process-bar {
@@ -507,11 +560,11 @@ body {
     }
     
     .filters {
-        padding: 15px 25px;
+        padding: 6px 15px;
     }
     
     .footer {
-        padding: 18px 25px;
+        padding: 4px 15px;
     }
 }
 
@@ -540,14 +593,14 @@ body {
     .filters {
         flex-direction: column;
         align-items: stretch;
-        gap: 15px;
-        padding: 15px 20px;
+        gap: 10px;
+        padding: 6px 15px;
     }
     
     .filter-group {
         flex-direction: column;
         align-items: stretch;
-        gap: 8px;
+        gap: 4px;
     }
     
     .filter-input {
@@ -556,15 +609,15 @@ body {
     
     .footer {
         flex-direction: column;
-        gap: 15px;
-        padding: 18px 20px;
+        gap: 8px;
+        padding: 6px 15px;
         min-height: auto;
     }
     
     .stats {
         flex-wrap: wrap;
         justify-content: center;
-        gap: 15px;
+        gap: 10px;
     }
 }
 
@@ -591,6 +644,6 @@ body {
     }
     
     .footer {
-        padding: 15px 20px;
+        padding: 4px 15px;
     }
 }

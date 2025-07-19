@@ -2,11 +2,12 @@
 
 const { useState, useEffect, useRef, useCallback } = React;
 
-// Component to render HTML safely with ANSI codes
-const AnsiText = ({ children }) => {
+// Component to render HTML safely with ANSI codes and search highlighting
+const AnsiText = ({ children, searchTerm }) => {
     const html = window.AnsiUtils.ansiToHtml(children);
+    const highlightedHtml = window.AnsiUtils.highlightSearchInHtml(html, searchTerm);
     return React.createElement('span', { 
-        dangerouslySetInnerHTML: { __html: html } 
+        dangerouslySetInnerHTML: { __html: highlightedHtml } 
     });
 };
 
@@ -89,7 +90,7 @@ const FilterControls = ({
                 title: 'Filter output lines containing this text'
             }),
             filterText && React.createElement('button', {
-                className: 'btn',
+                className: 'btn-clear',
                 onClick: onClearFilter,
                 title: 'Clear filter'
             }, '✕')
@@ -126,7 +127,7 @@ const FilterControls = ({
                         'No matches'
                 ),
                 React.createElement('button', {
-                    className: 'btn',
+                    className: 'btn-clear',
                     onClick: onClearSearch,
                     title: 'Clear search (Esc)'
                 }, '✕')
@@ -143,7 +144,8 @@ const OutputDisplay = ({
     onScroll, 
     boundToEnd, 
     onScrollToBottom,
-    searchManager 
+    searchManager,
+    searchTerm 
 }) => {
     const searchState = searchManager.getSearchState();
     
@@ -174,14 +176,27 @@ const OutputDisplay = ({
             ref: outputRef,
             onScroll: onScroll 
         },
-            ...filteredOutput.map((line, index) =>
-                React.createElement('div', {
+            ...filteredOutput.map((line, index) => {
+                // Build class name for the line
+                let lineClassName = 'output-line';
+                
+                // Add search highlighting classes
+                if (searchManager.hasSearchMatch(index)) {
+                    lineClassName += ' highlight';
+                }
+                if (searchManager.isLineHighlighted(index)) {
+                    lineClassName += ' current-search-result';
+                }
+                
+                return React.createElement('div', {
                     key: index,
-                    className: `output-line ${searchManager.isLineHighlighted(index) ? 'highlight' : ''}`
+                    className: lineClassName
                 },
-                    React.createElement(AnsiText, null, line)
-                )
-            )
+                    React.createElement(AnsiText, { 
+                        searchTerm: searchTerm
+                    }, line)
+                );
+            })
         ),
         
         // Show "new output" button when not bound to end and there's output
@@ -205,7 +220,7 @@ const OutputDisplay = ({
     );
 };
 
-// Footer stats and actions component
+// Footer stats and actions component - compact status bar style
 const Footer = ({ 
     stats, 
     filteredOutput, 
@@ -219,25 +234,24 @@ const Footer = ({
             React.createElement('span', null, `Processes: ${stats.total || 0}`),
             React.createElement('span', null, `Running: ${stats.running || 0}`),
             React.createElement('span', null, `Selected: ${stats.selected || 0}`),
-            React.createElement('span', null, `Output Lines: ${filteredOutput.length}`),
-            React.createElement('span', null, `Total Lines: ${output.length}`)
+            React.createElement('span', null, `Lines: ${filteredOutput.length}/${output.length}`)
         ),
         React.createElement('div', { className: 'action-buttons' },
             React.createElement('button', {
-                className: 'btn',
+                className: 'btn btn-small',
                 onClick: onSelectAll,
                 title: 'Select all processes for output'
-            }, 'Select All'),
+            }, 'All'),
             React.createElement('button', {
-                className: 'btn',
+                className: 'btn btn-small',
                 onClick: onDeselectAll,
                 title: 'Deselect all processes'
-            }, 'Select None'),
+            }, 'None'),
             React.createElement('button', {
-                className: 'btn btn-danger',
+                className: 'btn btn-small btn-secondary',
                 onClick: onClearOutput,
                 title: 'Clear all output (Ctrl/Cmd+K)'
-            }, 'Clear Output')
+            }, 'Clear')
         )
     );
 };
