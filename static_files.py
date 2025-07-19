@@ -30,11 +30,47 @@ def setup_static_routes(app: Sanic):
 
     @app.route("/app.js")
     async def app_js(_request):
-        """Serve JavaScript file"""
+        """Serve main JavaScript file"""
         try:
             return await file("app.js", mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// JavaScript file not found",
+            return text("// app.js file not found",
+                       content_type="application/javascript", status=404)
+
+    @app.route("/utils.js")
+    async def utils_js(_request):
+        """Serve utility JavaScript file"""
+        try:
+            return await file("utils.js", mime_type="application/javascript")
+        except FileNotFoundError:
+            return text("// utils.js file not found",
+                       content_type="application/javascript", status=404)
+
+    @app.route("/search.js")
+    async def search_js(_request):
+        """Serve search JavaScript file"""
+        try:
+            return await file("search.js", mime_type="application/javascript")
+        except FileNotFoundError:
+            return text("// search.js file not found",
+                       content_type="application/javascript", status=404)
+
+    @app.route("/websocket.js")
+    async def websocket_js(_request):
+        """Serve websocket JavaScript file"""
+        try:
+            return await file("websocket.js", mime_type="application/javascript")
+        except FileNotFoundError:
+            return text("// websocket.js file not found",
+                       content_type="application/javascript", status=404)
+
+    @app.route("/components.js")
+    async def components_js(_request):
+        """Serve components JavaScript file"""
+        try:
+            return await file("components.js", mime_type="application/javascript")
+        except FileNotFoundError:
+            return text("// components.js file not found",
                        content_type="application/javascript", status=404)
 
     @app.route("/favicon.ico")
@@ -61,7 +97,8 @@ class TestStaticFiles(unittest.TestCase):
 
         # Check that routes were added
         route_names = [route.name for route in app.router.routes_all.values()]
-        expected_routes = ['index', 'styles', 'app_js', 'favicon']
+        expected_routes = ['index', 'styles', 'app_js', 'utils_js', 
+                          'search_js', 'websocket_js', 'components_js', 'favicon']
 
         for expected_route in expected_routes:
             # Check if any route contains the expected name
