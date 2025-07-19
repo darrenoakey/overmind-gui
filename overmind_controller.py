@@ -36,6 +36,21 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
         self._output_task: Optional[asyncio.Task] = None
         self._status_task: Optional[asyncio.Task] = None
 
+    def get_colored_env(self) -> Dict[str, str]:
+        """Get environment variables that force color output"""
+        env = os.environ.copy()
+        # Force color output for overmind and child processes
+        env.update({
+            'FORCE_COLOR': '1',
+            'CLICOLOR_FORCE': '1',
+            'TERM': 'xterm-256color',
+            'COLORTERM': 'truecolor',
+            # Some programs check NO_COLOR - make sure it's not set
+        })
+        # Remove NO_COLOR if it exists
+        env.pop('NO_COLOR', None)
+        return env
+
     async def start(self) -> bool:
         """
         Start overmind process and monitoring tasks
@@ -58,12 +73,16 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
             # Build overmind start command with additional arguments
             cmd = ["overmind", "start", "--any-can-die"] + self.overmind_args
 
-            # Start overmind process
+            # Get environment with color forcing
+            env = self.get_colored_env()
+
+            # Start overmind process with color-forcing environment
             self.process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
-                cwd=self.working_directory
+                cwd=self.working_directory,
+                env=env
             )
 
             self.running = True
@@ -113,11 +132,13 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
     async def start_process(self, process_name: str) -> bool:
         """Start a specific process"""
         try:
+            env = self.get_colored_env()
             process = await asyncio.create_subprocess_exec(
                 "overmind", "start", process_name,
                 cwd=self.working_directory,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=env
             )
             await process.wait()
             return process.returncode == 0
@@ -128,11 +149,13 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
     async def stop_process(self, process_name: str) -> bool:
         """Stop a specific process"""
         try:
+            env = self.get_colored_env()
             process = await asyncio.create_subprocess_exec(
                 "overmind", "stop", process_name,
                 cwd=self.working_directory,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=env
             )
             await process.wait()
             return process.returncode == 0
@@ -143,11 +166,13 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
     async def restart_process(self, process_name: str) -> bool:
         """Restart a specific process"""
         try:
+            env = self.get_colored_env()
             process = await asyncio.create_subprocess_exec(
                 "overmind", "restart", process_name,
                 cwd=self.working_directory,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=env
             )
             await process.wait()
             return process.returncode == 0
@@ -158,11 +183,13 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
     async def get_status(self) -> Optional[str]:
         """Get current status of all processes"""
         try:
+            env = self.get_colored_env()
             process = await asyncio.create_subprocess_exec(
                 "overmind", "status",
                 cwd=self.working_directory,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=env
             )
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10)
 
@@ -188,7 +215,13 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
                 if not line:
                     break
 
-                line_str = line.decode().rstrip('\n')
+                # Decode with error handling for potential encoding issues
+                try:
+                    line_str = line.decode('utf-8', errors='replace').rstrip('\n')
+                except UnicodeDecodeError:
+                    # Fallback to latin-1 if utf-8 fails
+                    line_str = line.decode('latin-1', errors='replace').rstrip('\n')
+
                 if line_str and self.output_callback:
                     self.output_callback(line_str)
 
@@ -320,3 +353,17 @@ redis    12347   dead
         """Test is_running returns False initially"""
         controller = OvermindController()
         self.assertFalse(controller.is_running())
+
+    def test_get_colored_env(self):
+        """Test environment variables for color output"""
+        controller = OvermindController()
+        env = controller.get_colored_env()
+
+        # Check that color-forcing variables are set
+        self.assertEqual(env['FORCE_COLOR'], '1')
+        self.assertEqual(env['CLICOLOR_FORCE'], '1')
+        self.assertEqual(env['TERM'], 'xterm-256color')
+        self.assertEqual(env['COLORTERM'], 'truecolor')
+
+        # Check that NO_COLOR is not present
+        self.assertNotIn('NO_COLOR', env)

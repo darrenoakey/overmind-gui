@@ -5,6 +5,86 @@ const { createRoot } = ReactDOM;
 // WebSocket connection
 let ws = null;
 
+// ANSI color mapping
+const ansiColors = {
+    '30': '#000000', // black
+    '31': '#cd0000', // red
+    '32': '#00cd00', // green
+    '33': '#cdcd00', // yellow
+    '34': '#0000ee', // blue
+    '35': '#cd00cd', // magenta
+    '36': '#00cdcd', // cyan
+    '37': '#e5e5e5', // white
+    '90': '#7f7f7f', // bright black (gray)
+    '91': '#ff0000', // bright red
+    '92': '#00ff00', // bright green
+    '93': '#ffff00', // bright yellow
+    '94': '#5c5cff', // bright blue
+    '95': '#ff00ff', // bright magenta
+    '96': '#00ffff', // bright cyan
+    '97': '#ffffff', // bright white
+};
+
+const ansiBgColors = {
+    '40': '#000000', // black
+    '41': '#cd0000', // red
+    '42': '#00cd00', // green
+    '43': '#cdcd00', // yellow
+    '44': '#0000ee', // blue
+    '45': '#cd00cd', // magenta
+    '46': '#00cdcd', // cyan
+    '47': '#e5e5e5', // white
+    '100': '#7f7f7f', // bright black (gray)
+    '101': '#ff0000', // bright red
+    '102': '#00ff00', // bright green
+    '103': '#ffff00', // bright yellow
+    '104': '#5c5cff', // bright blue
+    '105': '#ff00ff', // bright magenta
+    '106': '#00ffff', // bright cyan
+    '107': '#ffffff', // bright white
+};
+
+// Convert ANSI escape sequences to HTML
+const ansiToHtml = (text) => {
+    let html = text;
+    
+    // Handle reset codes
+    html = html.replace(/\x1b\[0m/g, '</span>');
+    html = html.replace(/\x1b\[m/g, '</span>');
+    
+    // Handle color codes
+    html = html.replace(/\x1b\[([0-9;]*)m/g, (match, codes) => {
+        if (!codes) return '</span>';
+        
+        const codeList = codes.split(';');
+        let styles = [];
+        
+        for (const code of codeList) {
+            if (ansiColors[code]) {
+                styles.push(`color: ${ansiColors[code]}`);
+            } else if (ansiBgColors[code]) {
+                styles.push(`background-color: ${ansiBgColors[code]}`);
+            } else if (code === '1') {
+                styles.push('font-weight: bold');
+            } else if (code === '3') {
+                styles.push('font-style: italic');
+            } else if (code === '4') {
+                styles.push('text-decoration: underline');
+            }
+        }
+        
+        return styles.length > 0 ? `<span style="${styles.join('; ')}">` : '';
+    });
+    
+    return html;
+};
+
+// Component to render HTML safely
+const AnsiText = ({ children }) => {
+    const html = ansiToHtml(children);
+    return <span dangerouslySetInnerHTML={{ __html: html }} />;
+};
+
 function App() {
     const [processes, setProcesses] = useState({});
     const [stats, setStats] = useState({total: 0, running: 0, selected: 0});
@@ -163,17 +243,23 @@ function App() {
         return () => document.removeEventListener('click', handleClick);
     }, []);
     
+    // Strip ANSI codes for searching (but keep them for display)
+    const stripAnsiCodes = (text) => {
+        return text.replace(/\x1b\[[0-9;]*m/g, '');
+    };
+    
     // Filter output based on filter text and selected processes
     const filteredOutput = output.filter(line => {
-        // First check if line matches filter text
-        const matchesFilter = !filterText || line.toLowerCase().includes(filterText.toLowerCase());
+        // First check if line matches filter text (search in clean text)
+        const cleanLine = stripAnsiCodes(line);
+        const matchesFilter = !filterText || cleanLine.toLowerCase().includes(filterText.toLowerCase());
         
         // Then check if this line belongs to a selected process
         // Parse process name from line (format: "processname | output")
-        if (line.includes(' | ')) {
-            const processName = line.split(' | ')[0].trim();
-            // Remove ANSI codes and timestamps from process name
-            const cleanName = processName.replace(/\x1b\[[0-9;]*m/g, '').replace(/\d{2}:\d{2}:\d{2}\s+/, '').trim();
+        if (cleanLine.includes(' | ')) {
+            const processName = cleanLine.split(' | ')[0].trim();
+            // Remove timestamps from process name
+            const cleanName = processName.replace(/\d{2}:\d{2}:\d{2}\s+/, '').trim();
             const process = processes[cleanName];
             const isSelected = process ? process.selected : true; // Show unrecognized lines by default
             return matchesFilter && isSelected;
@@ -194,7 +280,9 @@ function App() {
         const searchLower = searchText.toLowerCase();
         
         filteredOutput.forEach((line, index) => {
-            if (line.toLowerCase().includes(searchLower)) {
+            // Search in clean text without ANSI codes
+            const cleanLine = stripAnsiCodes(line);
+            if (cleanLine.toLowerCase().includes(searchLower)) {
                 results.push(index);
             }
         });
@@ -243,11 +331,6 @@ function App() {
             const isAtBottom = scrollTop + clientHeight >= scrollHeight - 10;
             setAutoScroll(isAtBottom);
         }
-    };
-    
-    // Strip ANSI codes for display
-    const stripAnsiCodes = (text) => {
-        return text.replace(/\x1b\[[0-9;]*m/g, '');
     };
     
     // Handle keyboard shortcuts
@@ -408,7 +491,7 @@ function App() {
                                         searchResults[currentSearchIndex] === index ? 'highlight' : ''
                                     }`}
                                 >
-                                    {stripAnsiCodes(line)}
+                                    <AnsiText>{line}</AnsiText>
                                 </div>
                             ))
                         )}
