@@ -168,7 +168,9 @@ function App() {
     };
     
     const handleProcessAction = (processName, action) => {
-        sendMessage('process_action', { process_name: processName, action });
+        // Map "start" to "restart" since overmind doesn't have a start command
+        const actualAction = action === 'start' ? 'restart' : action;
+        sendMessage('process_action', { process_name: processName, action: actualAction });
         setContextMenu(null);
     };
     
@@ -348,9 +350,10 @@ function App() {
             onClearOutput: clearOutput
         }),
         
-        // Context menu
+        // Context menu - now passes processes for smart menu
         React.createElement(window.Components.ContextMenu, {
             contextMenu,
+            processes, // Pass processes so context menu can determine status
             onProcessAction: handleProcessAction
         })
     );

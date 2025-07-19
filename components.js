@@ -256,26 +256,46 @@ const Footer = ({
     );
 };
 
-// Context menu component
-const ContextMenu = ({ contextMenu, onProcessAction }) => {
+// Context menu component - now shows relevant actions based on process status
+const ContextMenu = ({ contextMenu, processes, onProcessAction }) => {
     if (!contextMenu) return null;
+    
+    // Get the process info to determine what actions to show
+    const process = processes[contextMenu.processName];
+    const status = process ? process.status : 'unknown';
+    
+    // Determine which actions to show based on status
+    let actions = [];
+    
+    if (status === 'running') {
+        // If running, show stop and restart
+        actions = [
+            { label: '🛑 Stop', action: 'stop' },
+            { label: '🔄 Restart', action: 'restart' }
+        ];
+    } else {
+        // If stopped, dead, or unknown, show start (which maps to restart)
+        actions = [
+            { label: '🟢 Start', action: 'start' }
+        ];
+        
+        // Also show restart if it's in a known stopped state
+        if (status === 'stopped' || status === 'dead') {
+            actions.push({ label: '🔄 Restart', action: 'restart' });
+        }
+    }
     
     return React.createElement('div', {
         className: 'context-menu',
         style: { left: contextMenu.x, top: contextMenu.y }
     },
-        React.createElement('div', {
-            className: 'context-menu-item',
-            onClick: () => onProcessAction(contextMenu.processName, 'start')
-        }, '🟢 Start'),
-        React.createElement('div', {
-            className: 'context-menu-item',
-            onClick: () => onProcessAction(contextMenu.processName, 'stop')
-        }, '🛑 Stop'),
-        React.createElement('div', {
-            className: 'context-menu-item',
-            onClick: () => onProcessAction(contextMenu.processName, 'restart')
-        }, '🔄 Restart')
+        ...actions.map((actionItem, index) =>
+            React.createElement('div', {
+                key: index,
+                className: 'context-menu-item',
+                onClick: () => onProcessAction(contextMenu.processName, actionItem.action)
+            }, actionItem.label)
+        )
     );
 };
 
