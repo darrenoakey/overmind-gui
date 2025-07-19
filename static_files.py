@@ -97,7 +97,7 @@ class TestStaticFiles(unittest.TestCase):
 
         # Check that routes were added
         route_names = [route.name for route in app.router.routes_all.values()]
-        expected_routes = ['index', 'styles', 'app_js', 'utils_js', 
+        expected_routes = ['index', 'styles', 'app_js', 'utils_js',
                           'search_js', 'websocket_js', 'components_js', 'favicon']
 
         for expected_route in expected_routes:
