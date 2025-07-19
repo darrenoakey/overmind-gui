@@ -6,6 +6,7 @@ class SearchManager {
         this.searchResults = [];
         this.currentSearchIndex = -1;
         this.outputRef = null;
+        this.lastSearchedLineContent = null; // Track content of current search result
     }
 
     setOutputRef(ref) {
@@ -19,6 +20,7 @@ class SearchManager {
         if (!searchText) {
             this.searchResults = [];
             this.currentSearchIndex = -1;
+            this.lastSearchedLineContent = null;
             return { results: [], currentIndex: -1 };
         }
         
@@ -33,10 +35,44 @@ class SearchManager {
             }
         });
         
-        this.searchResults = results;
-        this.currentSearchIndex = results.length > 0 ? 0 : -1;
+        // If we had a previous search position, try to maintain it
+        if (this.currentSearchIndex >= 0 && this.lastSearchedLineContent && results.length > 0) {
+            // Try to find the same line content in the new results
+            let newIndex = -1;
+            for (let i = 0; i < results.length; i++) {
+                const resultLineIndex = results[i];
+                if (resultLineIndex < filteredOutput.length) {
+                    const lineContent = window.AnsiUtils.stripAnsiCodes(filteredOutput[resultLineIndex]);
+                    if (lineContent === this.lastSearchedLineContent) {
+                        newIndex = i;
+                        break;
+                    }
+                }
+            }
+            
+            // If we found the same content, use that position
+            if (newIndex >= 0) {
+                this.searchResults = results;
+                this.currentSearchIndex = newIndex;
+            } else {
+                // If we can't find the exact content, try to maintain relative position
+                const relativePosition = this.currentSearchIndex / this.searchResults.length;
+                this.searchResults = results;
+                this.currentSearchIndex = Math.min(
+                    Math.floor(relativePosition * results.length),
+                    results.length - 1
+                );
+            }
+        } else {
+            // No previous position, start from beginning
+            this.searchResults = results;
+            this.currentSearchIndex = results.length > 0 ? 0 : -1;
+        }
         
-        // Scroll to first result if found
+        // Update the tracked content for the current position
+        this._updateTrackedContent(filteredOutput);
+        
+        // Scroll to current result if we have one
         if (this.currentSearchIndex >= 0) {
             this.scrollToCurrentResult();
         }
@@ -53,6 +89,7 @@ class SearchManager {
         
         this.currentSearchIndex = (this.currentSearchIndex + 1) % this.searchResults.length;
         this.scrollToCurrentResult();
+        this._updateTrackedContent();
         return true;
     }
 
@@ -64,7 +101,22 @@ class SearchManager {
             this.searchResults.length - 1 : 
             this.currentSearchIndex - 1;
         this.scrollToCurrentResult();
+        this._updateTrackedContent();
         return true;
+    }
+
+    // Update the tracked content for position maintenance
+    _updateTrackedContent(filteredOutput = null) {
+        if (this.currentSearchIndex >= 0 && this.outputRef?.current) {
+            if (filteredOutput) {
+                const resultLineIndex = this.searchResults[this.currentSearchIndex];
+                if (resultLineIndex < filteredOutput.length) {
+                    this.lastSearchedLineContent = window.AnsiUtils.stripAnsiCodes(
+                        filteredOutput[resultLineIndex]
+                    );
+                }
+            }
+        }
     }
 
     // Scroll to the current search result

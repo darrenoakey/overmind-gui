@@ -43,7 +43,7 @@ const ProcessBar = ({ processes, onToggleProcess, onContextMenu }) => {
     if (processEntries.length === 0) {
         return React.createElement('div', { className: 'process-bar' },
             React.createElement('div', { 
-                style: { color: '#6c757d', fontStyle: 'italic' } 
+                style: { color: '#rgba(255,255,255,0.8)', fontStyle: 'italic' } 
             }, 'No processes loaded. Make sure there\'s a Procfile in the current directory.')
         );
     }
@@ -57,10 +57,7 @@ const ProcessBar = ({ processes, onToggleProcess, onContextMenu }) => {
                 onContextMenu: (e) => onContextMenu(e, name),
                 title: `${name} - ${process.status} (Click to toggle, Right-click for actions)`
             },
-                React.createElement('div', { className: 'process-name' }, name),
-                React.createElement('div', { 
-                    className: `process-status status-${process.status}` 
-                }, process.status)
+                React.createElement('div', { className: 'process-name' }, name)
             )
         )
     );

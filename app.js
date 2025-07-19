@@ -176,19 +176,20 @@ function App() {
     // Search navigation functions
     const nextSearch = () => {
         if (searchManager.nextSearch()) {
-            setAutoScroll(false); // Disable auto-scroll when searching
+            setAutoScroll(false); // Disable auto-scroll when actively searching
         }
     };
     
     const prevSearch = () => {
         if (searchManager.prevSearch()) {
-            setAutoScroll(false); // Disable auto-scroll when searching
+            setAutoScroll(false); // Disable auto-scroll when actively searching
         }
     };
     
-    // Auto-scroll output
+    // Auto-scroll output (only when not actively searching)
     useEffect(() => {
-        if (outputRef.current && autoScroll && searchManager.getSearchState().currentIndex === -1) {
+        const searchState = searchManager.getSearchState();
+        if (outputRef.current && autoScroll && !searchState.hasResults) {
             outputRef.current.scrollTop = outputRef.current.scrollHeight;
         }
     }, [output, autoScroll]);
@@ -198,7 +199,14 @@ function App() {
         if (outputRef.current) {
             const { scrollTop, scrollHeight, clientHeight } = outputRef.current;
             const isAtBottom = scrollTop + clientHeight >= scrollHeight - 10;
-            setAutoScroll(isAtBottom);
+            
+            // Only enable auto-scroll if we're at the bottom and not actively searching
+            const searchState = searchManager.getSearchState();
+            if (isAtBottom && !searchState.hasResults) {
+                setAutoScroll(true);
+            } else if (!isAtBottom) {
+                setAutoScroll(false);
+            }
         }
     };
     
