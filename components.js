@@ -141,7 +141,7 @@ const OutputDisplay = ({
     output, 
     outputRef, 
     onScroll, 
-    autoScroll, 
+    boundToEnd, 
     onScrollToBottom,
     searchManager 
 }) => {
@@ -184,7 +184,8 @@ const OutputDisplay = ({
             )
         ),
         
-        !autoScroll && !searchState.hasResults && React.createElement('div', {
+        // Show "new output" button when not bound to end and there's output
+        !boundToEnd && output.length > 0 && React.createElement('div', {
             style: {
                 position: 'absolute',
                 bottom: '20px',
@@ -195,10 +196,11 @@ const OutputDisplay = ({
                 borderRadius: '20px',
                 cursor: 'pointer',
                 fontSize: '12px',
-                boxShadow: '0 2px 10px rgba(0,0,0,0.2)'
+                boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
+                animation: 'bounce 2s infinite'
             },
             onClick: onScrollToBottom,
-            title: 'Click to return to bottom'
+            title: 'Click to scroll to bottom and follow new output'
         }, '↓ New output')
     );
 };

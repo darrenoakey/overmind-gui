@@ -11,8 +11,13 @@ function App() {
     const [searchText, setSearchText] = useState('');
     const [connected, setConnected] = useState(false);
     const [contextMenu, setContextMenu] = useState(null);
-    const [autoScroll, setAutoScroll] = useState(true);
     const [overmindStatus, setOvermindStatus] = useState({status: 'connecting', error: null});
+    
+    // Core scroll state - this is the key state that controls everything
+    const [boundToEnd, setBoundToEnd] = useState(true);
+    
+    // Track if we're in the middle of programmatic scrolling to avoid state changes
+    const [isProgrammaticScroll, setIsProgrammaticScroll] = useState(false);
     
     // Refs
     const outputRef = useRef(null);
@@ -71,8 +76,8 @@ function App() {
         
         const handleOutputCleared = () => {
             setOutput([]);
-            // Clear search when output is cleared
             searchManager.clearSearch();
+            setBoundToEnd(true); // Always bound to end after clearing
         };
         
         const handleOvermindStatus = (data) => {
@@ -132,6 +137,27 @@ function App() {
         searchManager.updateSearch(searchText, filteredOutput);
     }, [searchText, filteredOutput]);
     
+    // Handle new output arriving - scroll to end if bound to end
+    useEffect(() => {
+        if (boundToEnd && outputRef.current) {
+            setIsProgrammaticScroll(true);
+            outputRef.current.scrollTop = outputRef.current.scrollHeight;
+            // Reset the flag after scroll completes
+            setTimeout(() => setIsProgrammaticScroll(false), 50);
+        }
+    }, [output, boundToEnd]);
+    
+    // Handle filtered output changes - if we're searching, maintain search position
+    useEffect(() => {
+        const searchState = searchManager.getSearchState();
+        if (searchState.hasResults && searchState.currentIndex >= 0) {
+            // We're actively searching, let search manager handle positioning
+            setTimeout(() => {
+                searchManager.scrollToCurrentResult();
+            }, 50);
+        }
+    }, [filteredOutput]);
+    
     // WebSocket communication functions
     const sendMessage = (type, data) => {
         return wsManager.sendMessage(type, data);
@@ -175,57 +201,58 @@ function App() {
         });
     };
     
-    // Search navigation functions
+    // Search navigation functions - these turn off boundToEnd
     const nextSearch = () => {
         if (searchManager.nextSearch()) {
-            setAutoScroll(false); // Disable auto-scroll when actively searching
+            setBoundToEnd(false); // Rule b: searching turns off bound to end
         }
     };
     
     const prevSearch = () => {
         if (searchManager.prevSearch()) {
-            setAutoScroll(false); // Disable auto-scroll when actively searching
+            setBoundToEnd(false); // Rule b: searching turns off bound to end
         }
     };
     
-    // Clear search and re-enable auto-scroll
+    // Handle search text changes - turn off boundToEnd when starting to search
+    const handleSearchChange = (newSearchText) => {
+        setSearchText(newSearchText);
+        if (newSearchText.trim() !== '') {
+            setBoundToEnd(false); // Rule b: non-blank search turns off bound to end
+        }
+    };
+    
+    // Clear search
     const clearSearch = () => {
         searchManager.clearSearch();
         setSearchText('');
-        setAutoScroll(true);
+        // Don't automatically turn boundToEnd back on when clearing search
     };
     
-    // Auto-scroll output (only when not actively searching)
-    useEffect(() => {
-        const searchState = searchManager.getSearchState();
-        if (outputRef.current && autoScroll && !searchState.hasResults && !searchState.isNavigating) {
-            outputRef.current.scrollTop = outputRef.current.scrollHeight;
-        }
-    }, [output, autoScroll]);
-    
-    // Handle scroll events to manage auto-scroll
-    const handleScroll = () => {
-        if (outputRef.current) {
-            const { scrollTop, scrollHeight, clientHeight } = outputRef.current;
-            const isAtBottom = scrollTop + clientHeight >= scrollHeight - 10;
-            
-            // Only manage auto-scroll if we're not actively searching
-            const searchState = searchManager.getSearchState();
-            if (!searchState.hasResults && !searchState.isNavigating) {
-                if (isAtBottom) {
-                    setAutoScroll(true);
-                } else {
-                    setAutoScroll(false);
-                }
-            }
-        }
-    };
-    
+    // Force scroll to bottom and turn on boundToEnd - Rule a
     const scrollToBottom = () => {
-        setAutoScroll(true);
+        setBoundToEnd(true);
         if (outputRef.current) {
+            setIsProgrammaticScroll(true);
             outputRef.current.scrollTop = outputRef.current.scrollHeight;
+            setTimeout(() => setIsProgrammaticScroll(false), 50);
         }
+    };
+    
+    // Handle user scrolling - Rule c: user scrolling can turn off boundToEnd
+    const handleScroll = () => {
+        // Only react to user scrolling, not programmatic scrolling
+        if (isProgrammaticScroll || !outputRef.current) return;
+        
+        const { scrollTop, scrollHeight, clientHeight } = outputRef.current;
+        const isAtBottom = scrollTop + clientHeight >= scrollHeight - 10;
+        
+        // If user scrolled away from bottom, turn off boundToEnd
+        if (!isAtBottom && boundToEnd) {
+            setBoundToEnd(false);
+        }
+        // Note: we don't automatically turn boundToEnd back on when user scrolls to bottom
+        // That only happens when they click the "new output" button
     };
     
     // Close context menu when clicking elsewhere
@@ -289,7 +316,7 @@ function App() {
                 filterText,
                 onFilterChange: setFilterText,
                 searchText,
-                onSearchChange: setSearchText,
+                onSearchChange: handleSearchChange,
                 searchManager,
                 onNextSearch: nextSearch,
                 onPrevSearch: prevSearch,
@@ -303,7 +330,7 @@ function App() {
                 output,
                 outputRef,
                 onScroll: handleScroll,
-                autoScroll,
+                boundToEnd: boundToEnd,
                 onScrollToBottom: scrollToBottom,
                 searchManager
             })

@@ -6,7 +6,6 @@ class SearchManager {
         this.searchResults = [];
         this.currentSearchIndex = -1;
         this.outputRef = null;
-        this.isNavigating = false; // Flag to prevent auto-updates during navigation
     }
 
     setOutputRef(ref) {
@@ -20,7 +19,6 @@ class SearchManager {
         if (!searchText) {
             this.searchResults = [];
             this.currentSearchIndex = -1;
-            this.isNavigating = false;
             return { results: [], currentIndex: -1 };
         }
         
@@ -35,37 +33,17 @@ class SearchManager {
             }
         });
         
-        // If we're not actively navigating and this is a new search or first search
-        if (!this.isNavigating || this.searchResults.length === 0) {
-            this.searchResults = results;
-            this.currentSearchIndex = results.length > 0 ? 0 : -1;
-        } else {
-            // We're actively navigating, so try to maintain position more carefully
-            const oldResultCount = this.searchResults.length;
-            const newResultCount = results.length;
-            
-            if (newResultCount === 0) {
-                this.searchResults = [];
-                this.currentSearchIndex = -1;
-            } else if (oldResultCount === 0) {
-                // First time finding results
-                this.searchResults = results;
-                this.currentSearchIndex = 0;
-            } else {
-                // Try to maintain relative position
-                const relativePosition = this.currentSearchIndex / oldResultCount;
-                this.searchResults = results;
-                this.currentSearchIndex = Math.min(
-                    Math.floor(relativePosition * newResultCount),
-                    newResultCount - 1
-                );
-                this.currentSearchIndex = Math.max(0, this.currentSearchIndex);
-            }
-        }
+        // Update results
+        this.searchResults = results;
         
-        // Auto-scroll to current result only if we have one and we're not navigating
-        if (this.currentSearchIndex >= 0 && !this.isNavigating) {
-            this.scrollToCurrentResult();
+        // Set initial position for new search
+        if (results.length > 0) {
+            // If we don't have a current position or it's no longer valid, start at beginning
+            if (this.currentSearchIndex < 0 || this.currentSearchIndex >= results.length) {
+                this.currentSearchIndex = 0;
+            }
+        } else {
+            this.currentSearchIndex = -1;
         }
         
         return { 
@@ -78,15 +56,8 @@ class SearchManager {
     nextSearch() {
         if (this.searchResults.length === 0) return false;
         
-        this.isNavigating = true;
         this.currentSearchIndex = (this.currentSearchIndex + 1) % this.searchResults.length;
         this.scrollToCurrentResult();
-        
-        // Reset navigating flag after a short delay
-        setTimeout(() => {
-            this.isNavigating = false;
-        }, 100);
-        
         return true;
     }
 
@@ -94,17 +65,10 @@ class SearchManager {
     prevSearch() {
         if (this.searchResults.length === 0) return false;
         
-        this.isNavigating = true;
         this.currentSearchIndex = this.currentSearchIndex <= 0 ? 
             this.searchResults.length - 1 : 
             this.currentSearchIndex - 1;
         this.scrollToCurrentResult();
-        
-        // Reset navigating flag after a short delay
-        setTimeout(() => {
-            this.isNavigating = false;
-        }, 100);
-        
         return true;
     }
 
@@ -136,8 +100,7 @@ class SearchManager {
             results: this.searchResults,
             currentIndex: this.currentSearchIndex,
             hasResults: this.searchResults.length > 0,
-            resultCount: this.searchResults.length,
-            isNavigating: this.isNavigating
+            resultCount: this.searchResults.length
         };
     }
 
@@ -152,7 +115,6 @@ class SearchManager {
         this.searchText = '';
         this.searchResults = [];
         this.currentSearchIndex = -1;
-        this.isNavigating = false;
     }
 }
 
