@@ -57,6 +57,12 @@ app.ctx.process_manager = ProcessManager()
 app.ctx.overmind_controller = None
 app.ctx.tasks = []
 
+# -----------------------------------------------------------------------------
+# Setup routes
+# -----------------------------------------------------------------------------
+setup_static_routes(app)
+app.websocket("/ws")(websocket_handler)
+
 
 # -----------------------------------------------------------------------------
 # Background task callbacks
@@ -229,38 +235,34 @@ def main():
     if args.ui:
         launch_ui(args.port)
         return 0
-    else:
-        # Setup routes
-        setup_static_routes(app)
-        app.websocket("/ws")(websocket_handler)
 
-        # Check for Procfile
-        if not os.path.exists("Procfile"):
-            print("ERROR: No Procfile found in current directory")
-            print("Please run this application from a directory containing a Procfile")
-            return 1
+    # Check for Procfile
+    if not os.path.exists("Procfile"):
+        print("ERROR: No Procfile found in current directory")
+        print("Please run this application from a directory containing a Procfile")
+        return 1
 
-        # Check if overmind is available
-        try:
-            result = subprocess.run(["overmind", "--version"],
-                                  capture_output=True, check=True)
-            print(f"Found overmind: {result.stdout.decode().strip()}")
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            print("WARNING: overmind not found or not working")
-            print("Please install overmind: brew install overmind")
-            print("Continuing anyway - GUI will work but process management will be limited")
+    # Check if overmind is available
+    try:
+        result = subprocess.run(["overmind", "--version"],
+                              capture_output=True, check=True)
+        print(f"Found overmind: {result.stdout.decode().strip()}")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("WARNING: overmind not found or not working")
+        print("Please install overmind: brew install overmind")
+        print("Continuing anyway - GUI will work but process management will be limited")
 
-        print(f"Starting Overmind GUI on {HOST}:{args.port}")
-        print("Press Ctrl+C to stop")
+    print(f"Starting Overmind GUI on {HOST}:{args.port}")
+    print("Press Ctrl+C to stop")
 
-        app.run(
-            host=HOST,
-            port=args.port,
-            protocol=WebSocketProtocol,
-            debug=True,
-            auto_reload=True,
-        )
-        return 0
+    app.run(
+        host=HOST,
+        port=args.port,
+        protocol=WebSocketProtocol,
+        debug=True,
+        auto_reload=True,
+    )
+    return 0
 
 
 # -----------------------------------------------------------------------------
