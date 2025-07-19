@@ -127,7 +127,7 @@ body {
     border-radius: 12px;
     padding: 8px 12px;
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     min-width: 80px;
     max-width: 120px;
     flex: 1;
@@ -141,55 +141,66 @@ body {
     justify-content: center;
 }
 
-/* LED indicator on the left edge */
+/* LED indicator on the left edge - bigger and brighter */
 .process-button::before {
     content: '';
     position: absolute;
     left: 0;
     top: 0;
-    width: 4px;
+    width: 8px;
     height: 100%;
     border-radius: 12px 0 0 12px;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
+    opacity: 0.3; /* Default dim state for unselected */
 }
 
 /* LED colors based on status */
 .process-button.running::before {
     background: var(--success-color);
-    box-shadow: 0 0 8px rgba(40, 167, 69, 0.6);
+    box-shadow: 0 0 12px rgba(40, 167, 69, 0.8);
 }
 
 .process-button.dead::before {
     background: var(--danger-color);
-    box-shadow: 0 0 8px rgba(220, 53, 69, 0.6);
+    box-shadow: 0 0 12px rgba(220, 53, 69, 0.8);
 }
 
 .process-button.stopped::before {
     background: var(--secondary-color);
-    box-shadow: 0 0 8px rgba(108, 117, 125, 0.6);
+    box-shadow: 0 0 12px rgba(108, 117, 125, 0.8);
 }
 
 /* Default/unknown status */
 .process-button:not(.running):not(.dead):not(.stopped)::before {
     background: var(--unknown-color);
-    box-shadow: 0 0 8px rgba(255, 165, 0, 0.6);
+    box-shadow: 0 0 12px rgba(255, 165, 0, 0.8);
 }
 
+/* Selected state - make LED bright and visible */
+.process-button.selected::before {
+    opacity: 1;
+}
+
+/* Hover effect - only opacity change, no movement */
 .process-button:hover {
+    opacity: 0.8;
     background: rgba(255, 255, 255, 0.25);
-    transform: translateY(-2px);
-    box-shadow: 
-        0 6px 16px rgba(0, 0, 0, 0.15),
-        inset 0 1px 0 rgba(255, 255, 255, 0.3);
     border-color: rgba(255, 255, 255, 0.3);
 }
 
+/* Selected button styling */
 .process-button.selected {
     background: rgba(255, 255, 255, 0.3);
     border-color: rgba(255, 255, 255, 0.4);
     box-shadow: 
         0 4px 12px rgba(0, 123, 255, 0.2),
         inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+/* Active state for immediate feedback on click */
+.process-button:active {
+    transform: scale(0.98);
+    transition: transform 0.1s ease;
 }
 
 .process-name {
@@ -200,7 +211,7 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    padding-left: 8px; /* Space for LED indicator */
+    padding-left: 12px; /* Space for bigger LED indicator */
 }
 
 .content {
@@ -474,8 +485,13 @@ body {
         padding: 6px 10px;
     }
     
+    .process-button::before {
+        width: 6px;
+    }
+    
     .process-name {
         font-size: 12px;
+        padding-left: 10px;
     }
     
     .filters {
@@ -500,9 +516,13 @@ body {
         padding: 6px 8px;
     }
     
+    .process-button::before {
+        width: 5px;
+    }
+    
     .process-name {
         font-size: 11px;
-        padding-left: 6px;
+        padding-left: 8px;
     }
     
     .filters {
@@ -544,9 +564,13 @@ body {
         font-size: 10px;
     }
     
+    .process-button::before {
+        width: 4px;
+    }
+    
     .process-name {
         font-size: 10px;
-        padding-left: 5px;
+        padding-left: 6px;
     }
     
     .output {

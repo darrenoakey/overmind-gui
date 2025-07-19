@@ -71,6 +71,8 @@ function App() {
         
         const handleOutputCleared = () => {
             setOutput([]);
+            // Clear search when output is cleared
+            searchManager.clearSearch();
         };
         
         const handleOvermindStatus = (data) => {
@@ -186,10 +188,17 @@ function App() {
         }
     };
     
+    // Clear search and re-enable auto-scroll
+    const clearSearch = () => {
+        searchManager.clearSearch();
+        setSearchText('');
+        setAutoScroll(true);
+    };
+    
     // Auto-scroll output (only when not actively searching)
     useEffect(() => {
         const searchState = searchManager.getSearchState();
-        if (outputRef.current && autoScroll && !searchState.hasResults) {
+        if (outputRef.current && autoScroll && !searchState.hasResults && !searchState.isNavigating) {
             outputRef.current.scrollTop = outputRef.current.scrollHeight;
         }
     }, [output, autoScroll]);
@@ -200,12 +209,14 @@ function App() {
             const { scrollTop, scrollHeight, clientHeight } = outputRef.current;
             const isAtBottom = scrollTop + clientHeight >= scrollHeight - 10;
             
-            // Only enable auto-scroll if we're at the bottom and not actively searching
+            // Only manage auto-scroll if we're not actively searching
             const searchState = searchManager.getSearchState();
-            if (isAtBottom && !searchState.hasResults) {
-                setAutoScroll(true);
-            } else if (!isAtBottom) {
-                setAutoScroll(false);
+            if (!searchState.hasResults && !searchState.isNavigating) {
+                if (isAtBottom) {
+                    setAutoScroll(true);
+                } else {
+                    setAutoScroll(false);
+                }
             }
         }
     };
@@ -239,11 +250,18 @@ function App() {
                         break;
                 }
             }
+            
+            // Escape key to clear search
+            if (e.key === 'Escape') {
+                if (searchText) {
+                    clearSearch();
+                }
+            }
         };
         
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
-    }, []);
+    }, [searchText]);
     
     // Show loading screen if not connected
     if (!connected) {
@@ -276,7 +294,7 @@ function App() {
                 onNextSearch: nextSearch,
                 onPrevSearch: prevSearch,
                 onClearFilter: () => setFilterText(''),
-                onClearSearch: () => setSearchText('')
+                onClearSearch: clearSearch
             }),
             
             // Output display

@@ -43,7 +43,7 @@ const ProcessBar = ({ processes, onToggleProcess, onContextMenu }) => {
     if (processEntries.length === 0) {
         return React.createElement('div', { className: 'process-bar' },
             React.createElement('div', { 
-                style: { color: '#rgba(255,255,255,0.8)', fontStyle: 'italic' } 
+                style: { color: 'rgba(255,255,255,0.8)', fontStyle: 'italic' } 
             }, 'No processes loaded. Make sure there\'s a Procfile in the current directory.')
         );
     }
@@ -103,7 +103,7 @@ const FilterControls = ({
                 placeholder: 'Search and navigate...',
                 value: searchText,
                 onChange: (e) => onSearchChange(e.target.value),
-                title: 'Search through filtered output (Ctrl/Cmd+F)'
+                title: 'Search through filtered output (Ctrl/Cmd+F, Esc to clear)'
             }),
             React.createElement('div', { className: 'search-nav' },
                 React.createElement('button', {
@@ -128,7 +128,7 @@ const FilterControls = ({
                 React.createElement('button', {
                     className: 'btn',
                     onClick: onClearSearch,
-                    title: 'Clear search'
+                    title: 'Clear search (Esc)'
                 }, '✕')
             )
         )
@@ -145,6 +145,8 @@ const OutputDisplay = ({
     onScrollToBottom,
     searchManager 
 }) => {
+    const searchState = searchManager.getSearchState();
+    
     if (filteredOutput.length === 0) {
         return React.createElement('div', { className: 'output-container' },
             React.createElement('div', { 
@@ -182,7 +184,7 @@ const OutputDisplay = ({
             )
         ),
         
-        !autoScroll && React.createElement('div', {
+        !autoScroll && !searchState.hasResults && React.createElement('div', {
             style: {
                 position: 'absolute',
                 bottom: '20px',
