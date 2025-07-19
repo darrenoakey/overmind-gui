@@ -56,7 +56,10 @@ app.config.UI_PORT = DEFAULT_PORT
 # Initialize managers
 app.ctx.process_manager = ProcessManager()
 app.ctx.overmind_controller = None
+app.ctx.overmind_failed = False
+app.ctx.overmind_error = ""
 app.ctx.tasks = []
+app.ctx.shutdown_initiated = False
 
 # -----------------------------------------------------------------------------
 # Setup routes
@@ -101,6 +104,8 @@ async def overmind_task(app_instance):
     # Check for Procfile
     if not os.path.exists("Procfile"):
         print("WARNING: No Procfile found in current directory")
+        app_instance.ctx.overmind_failed = True
+        app_instance.ctx.overmind_error = "No Procfile found in current directory"
         return
 
     # Load processes from Procfile
@@ -109,6 +114,8 @@ async def overmind_task(app_instance):
         print(f"Loaded {len(process_names)} processes: {', '.join(process_names)}")
     except (FileNotFoundError, OSError) as e:
         print(f"Error loading Procfile: {e}")
+        app_instance.ctx.overmind_failed = True
+        app_instance.ctx.overmind_error = f"Error loading Procfile: {e}"
         return
 
     # Initialize overmind controller with callbacks
@@ -121,8 +128,26 @@ async def overmind_task(app_instance):
     success = await app_instance.ctx.overmind_controller.start()
     if success:
         print("Overmind started successfully")
+        # Broadcast success to any connected clients
+        asyncio.create_task(websocket_manager.broadcast("overmind_status", {
+            "status": "running",
+            "error": None
+        }))
     else:
-        print("Failed to start Overmind - continuing without it")
+        error_msg = "Failed to start Overmind"
+        # Check for common issues
+        if os.path.exists(".overmind.sock"):
+            error_msg += " (socket file exists - another instance may be running)"
+        print(error_msg)
+        app_instance.ctx.overmind_failed = True
+        app_instance.ctx.overmind_error = error_msg
+        
+        # Broadcast failure to any connected clients
+        asyncio.create_task(websocket_manager.broadcast("overmind_status", {
+            "status": "failed",
+            "error": error_msg
+        }))
+        return
 
     # Keep running periodic status updates
     await asyncio.sleep(10)  # Wait for initial startup
@@ -178,8 +203,10 @@ async def ui_launcher_task(app_instance):
 def setup_signal_handlers(app_instance):
     """Setup signal handlers for graceful shutdown"""
     def signal_handler(sig, _frame):
-        print(f"\nReceived signal {sig}, shutting down gracefully...")
-        app_instance.stop()
+        if not app_instance.ctx.shutdown_initiated:
+            print(f"\nReceived signal {sig}, shutting down gracefully...")
+            app_instance.ctx.shutdown_initiated = True
+            app_instance.stop()
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -208,14 +235,19 @@ async def setup(app_instance, loop):
 @app.listener("before_server_stop")
 async def cleanup(app_instance, _loop):
     """Clean up resources before server stops"""
+    if app_instance.ctx.shutdown_initiated:
+        return  # Already cleaning up
+    
     print("Starting cleanup...")
+    app_instance.ctx.shutdown_initiated = True
     # signal tasks to stop
     app_instance.ctx.running = False
 
-    # Stop overmind controller first
+    # Stop overmind controller first and WAIT for it
     if app_instance.ctx.overmind_controller:
         print("Stopping overmind controller...")
         await app_instance.ctx.overmind_controller.stop()
+        print("Overmind controller stopped")
 
     # cancel & await tasks
     print("Cancelling background tasks...")

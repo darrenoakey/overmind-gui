@@ -61,55 +61,49 @@ body {
     display: flex;
     flex-direction: column;
     background: white;
-    margin: 15px;
-    border-radius: 16px;
-    box-shadow: 0 25px 50px rgba(0,0,0,0.15);
     overflow: hidden;
-    backdrop-filter: blur(10px);
 }
 
-.header {
-    background: linear-gradient(135deg, var(--gradient-start) 0%, var(--gradient-end) 100%);
+/* Error banner */
+.error-banner {
+    background: linear-gradient(135deg, #dc3545, #c82333);
     color: white;
-    padding: 24px 30px;
+    padding: 15px 20px;
+    border-bottom: 1px solid #a71e2a;
+    position: relative;
+    z-index: 100;
+}
+
+.error-content {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    position: relative;
-    overflow: hidden;
+    gap: 15px;
+    max-width: 1200px;
+    margin: 0 auto;
 }
 
-.header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.1'%3E%3Ccircle cx='30' cy='30' r='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E") repeat;
-    pointer-events: none;
+.error-icon {
+    font-size: 24px;
+    flex-shrink: 0;
 }
 
-.header h1 {
-    font-size: 28px;
-    font-weight: 700;
-    position: relative;
-    z-index: 1;
+.error-text {
+    flex: 1;
 }
 
-.status {
+.error-text strong {
+    display: block;
+    font-size: 16px;
+    margin-bottom: 4px;
+}
+
+.error-detail {
     font-size: 14px;
-    background: rgba(255,255,255,0.25);
-    padding: 8px 16px;
-    border-radius: 25px;
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255,255,255,0.2);
-    position: relative;
-    z-index: 1;
+    opacity: 0.9;
 }
 
 .process-bar {
-    background: linear-gradient(to right, #f8f9fa, #e9ecef);
+    background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
     border-bottom: 1px solid #dee2e6;
     padding: 20px 30px;
     display: flex;
@@ -179,6 +173,7 @@ body {
     font-weight: 600;
     flex: 1;
     font-size: 14px;
+    color: #333;
 }
 
 .process-status {
@@ -302,10 +297,10 @@ body {
 .output {
     height: 100%;
     overflow-y: auto;
-    padding: 25px;
+    padding: 20px;
     font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Source Code Pro', monospace;
     font-size: 14px;
-    line-height: 1.5;
+    line-height: 1.2;
     color: #f8f8f2;
     white-space: pre-wrap;
     word-break: break-word;
@@ -330,10 +325,10 @@ body {
 }
 
 .output-line {
-    margin-bottom: 3px;
+    margin-bottom: 1px;
     transition: all 0.2s ease;
-    padding: 2px 8px;
-    border-radius: 4px;
+    padding: 1px 4px;
+    border-radius: 3px;
     position: relative;
 }
 
@@ -356,12 +351,14 @@ body {
 .footer {
     background: linear-gradient(to right, #f8f9fa, #e9ecef);
     border-top: 1px solid #dee2e6;
-    padding: 15px 30px;
+    padding: 20px 30px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     font-size: 14px;
     color: #6c757d;
+    flex-shrink: 0;
+    min-height: 80px;
 }
 
 .stats {
@@ -388,7 +385,7 @@ body {
 }
 
 .btn {
-    padding: 10px 20px;
+    padding: 12px 24px;
     border: 2px solid transparent;
     border-radius: 8px;
     background: white;
@@ -398,6 +395,7 @@ body {
     transition: all 0.2s ease;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    min-height: 44px;
 }
 
 .btn:hover {
@@ -461,18 +459,6 @@ body {
 
 /* Responsive design */
 @media (max-width: 1024px) {
-    .app {
-        margin: 10px;
-    }
-    
-    .header {
-        padding: 20px 25px;
-    }
-    
-    .header h1 {
-        font-size: 24px;
-    }
-    
     .process-bar {
         padding: 15px 25px;
     }
@@ -480,21 +466,13 @@ body {
     .filters {
         padding: 15px 25px;
     }
+    
+    .footer {
+        padding: 18px 25px;
+    }
 }
 
 @media (max-width: 768px) {
-    .app {
-        margin: 5px;
-        border-radius: 12px;
-    }
-    
-    .header {
-        padding: 18px 20px;
-        flex-direction: column;
-        gap: 12px;
-        text-align: center;
-    }
-    
     .process-bar {
         padding: 12px 20px;
         min-height: auto;
@@ -525,7 +503,8 @@ body {
     .footer {
         flex-direction: column;
         gap: 15px;
-        padding: 15px 20px;
+        padding: 18px 20px;
+        min-height: auto;
     }
     
     .stats {
@@ -536,16 +515,6 @@ body {
 }
 
 @media (max-width: 480px) {
-    .app {
-        margin: 0;
-        border-radius: 0;
-        height: 100vh;
-    }
-    
-    .header h1 {
-        font-size: 20px;
-    }
-    
     .process-button {
         min-width: 100px;
         padding: 8px 12px;
@@ -555,5 +524,9 @@ body {
     .output {
         padding: 15px;
         font-size: 13px;
+    }
+    
+    .footer {
+        padding: 15px 20px;
     }
 }

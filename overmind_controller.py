@@ -67,7 +67,20 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
             if result.returncode != 0:
                 return False
         except FileNotFoundError:
+            print("Overmind binary not found")
             return False
+
+        # Check for existing socket file
+        socket_file = os.path.join(self.working_directory, ".overmind.sock")
+        if os.path.exists(socket_file):
+            print(f"Warning: Socket file {socket_file} already exists")
+            # Try to remove it
+            try:
+                os.unlink(socket_file)
+                print("Removed stale socket file")
+            except OSError as e:
+                print(f"Could not remove socket file: {e}")
+                return False
 
         try:
             # Build overmind start command with additional arguments
@@ -90,6 +103,14 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
             self.running = True
             print(f"Overmind process started with PID: {self.process.pid}")
 
+            # Give overmind a moment to start
+            await asyncio.sleep(2)
+            
+            # Check if process is still running
+            if self.process.returncode is not None:
+                print(f"Overmind process exited immediately with code: {self.process.returncode}")
+                return False
+
             # Start monitoring tasks
             self._output_task = asyncio.create_task(self._read_output())
             self._status_task = asyncio.create_task(self._monitor_status())
@@ -102,10 +123,13 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
 
     async def stop(self):
         """Stop overmind and all monitoring tasks"""
+        if not self.running:
+            return
+            
         self.running = False
         print("Stopping overmind controller...")
 
-        # Cancel monitoring tasks
+        # Cancel monitoring tasks first
         if self._output_task:
             self._output_task.cancel()
             try:
@@ -120,27 +144,37 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
             except asyncio.CancelledError:
                 pass
 
-        # Gracefully terminate overmind process
-        if self.process:
+        # Now stop overmind itself
+        if self.process and self.process.returncode is None:
             try:
-                print(f"Terminating overmind process (PID: {self.process.pid})")
-
-                # First try graceful shutdown with SIGTERM
+                print(f"Sending SIGTERM to overmind process (PID: {self.process.pid})")
+                
+                # Send SIGTERM to overmind
                 self.process.send_signal(signal.SIGTERM)
-
-                # Wait up to 10 seconds for graceful shutdown
+                
+                # Wait up to 15 seconds for graceful shutdown
                 try:
-                    await asyncio.wait_for(self.process.wait(), timeout=10)
+                    await asyncio.wait_for(self.process.wait(), timeout=15)
                     print("Overmind shut down gracefully")
                 except asyncio.TimeoutError:
-                    print("Overmind didn't shut down gracefully, sending SIGKILL")
+                    print("Overmind didn't shut down gracefully within 15 seconds, sending SIGKILL")
                     self.process.kill()
                     await self.process.wait()
-
+                    print("Overmind was force-killed")
+                    
             except (OSError, subprocess.SubprocessError, ProcessLookupError) as e:
                 print(f"Error stopping overmind: {e}")
             finally:
                 self.process = None
+
+        # Clean up socket file if it exists
+        socket_file = os.path.join(self.working_directory, ".overmind.sock")
+        if os.path.exists(socket_file):
+            try:
+                os.unlink(socket_file)
+                print("Cleaned up socket file")
+            except OSError as e:
+                print(f"Could not clean up socket file: {e}")
 
     async def start_process(self, process_name: str) -> bool:
         """Start a specific process"""

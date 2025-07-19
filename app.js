@@ -76,11 +76,6 @@ const ansiBgColors = {
 const ansiToHtml = (text) => {
     let html = text;
     
-    // Debug: Log when we encounter ANSI sequences
-    if (text.includes('\x1b[') || text.includes('\u001b[')) {
-        console.log('ANSI Debug - Processing line:', JSON.stringify(text));
-    }
-    
     // Handle both \x1b and \u001b escape sequences
     const ansiRegex = /[\x1b\u001b]\[([0-9;]*)m/g;
     
@@ -94,8 +89,6 @@ const ansiToHtml = (text) => {
         const codeList = codes.split(';').filter(c => c !== '');
         let styles = [];
         
-        console.log('ANSI Debug - Found codes:', codeList);
-        
         // Process codes sequentially, handling 256-color sequences
         for (let i = 0; i < codeList.length; i++) {
             const code = codeList[i];
@@ -107,7 +100,6 @@ const ansiToHtml = (text) => {
                 if (colorIndex >= 0 && colorIndex < ansi256Colors.length) {
                     const color = ansi256Colors[colorIndex];
                     styles.push(`color: ${color}`);
-                    console.log(`ANSI Debug - Applied 256-color ${colorIndex}: ${color}`);
                     i += 2; // Skip the next two codes (5 and colorIndex)
                     continue;
                 }
@@ -119,7 +111,6 @@ const ansiToHtml = (text) => {
                 if (colorIndex >= 0 && colorIndex < ansi256Colors.length) {
                     const color = ansi256Colors[colorIndex];
                     styles.push(`background-color: ${color}`);
-                    console.log(`ANSI Debug - Applied 256-bg-color ${colorIndex}: ${color}`);
                     i += 2; // Skip the next two codes (5 and colorIndex)
                     continue;
                 }
@@ -128,45 +119,30 @@ const ansiToHtml = (text) => {
             // Handle basic 8/16 colors
             if (ansiColors[code]) {
                 styles.push(`color: ${ansiColors[code]}`);
-                console.log(`ANSI Debug - Applied basic color ${code}: ${ansiColors[code]}`);
             } else if (ansiBgColors[code]) {
                 styles.push(`background-color: ${ansiBgColors[code]}`);
-                console.log(`ANSI Debug - Applied basic bg color ${code}: ${ansiBgColors[code]}`);
             } else if (codeNum === 1) {
                 styles.push('font-weight: bold');
-                console.log('ANSI Debug - Applied bold');
             } else if (codeNum === 3) {
                 styles.push('font-style: italic');
-                console.log('ANSI Debug - Applied italic');
             } else if (codeNum === 4) {
                 styles.push('text-decoration: underline');
-                console.log('ANSI Debug - Applied underline');
             } else if (codeNum === 22) {
                 styles.push('font-weight: normal');
-                console.log('ANSI Debug - Reset bold');
             } else if (codeNum === 23) {
                 styles.push('font-style: normal');
-                console.log('ANSI Debug - Reset italic');
             } else if (codeNum === 24) {
                 styles.push('text-decoration: none');
-                console.log('ANSI Debug - Reset underline');
-            } else {
-                console.log(`ANSI Debug - Unknown/unhandled code: ${code}`);
             }
         }
         
         if (styles.length > 0) {
             const result = `<span style="${styles.join('; ')}">`;
-            console.log('ANSI Debug - Generated span:', result);
             return result;
         }
         
         return '';
     });
-    
-    if (text.includes('\x1b[') || text.includes('\u001b[')) {
-        console.log('ANSI Debug - Final HTML result:', html);
-    }
     
     return html;
 };
@@ -188,6 +164,7 @@ function App() {
     const [connected, setConnected] = useState(false);
     const [contextMenu, setContextMenu] = useState(null);
     const [autoScroll, setAutoScroll] = useState(true);
+    const [overmindStatus, setOvermindStatus] = useState({status: 'connecting', error: null});
     
     const outputRef = useRef(null);
     const wsRef = useRef(null);
@@ -274,6 +251,13 @@ function App() {
                 
             case 'output_cleared':
                 setOutput([]);
+                break;
+                
+            case 'overmind_status':
+                setOvermindStatus({
+                    status: message.data.status,
+                    error: message.data.error
+                });
                 break;
                 
             case 'action_result':
@@ -460,12 +444,18 @@ function App() {
     
     return (
         <div className="app">
-            <div className="header">
-                <h1>Overmind GUI</h1>
-                <div className="status">
-                    {connected ? '🟢 Connected' : '🔴 Disconnected'}
+            {/* Error banner for overmind failures */}
+            {overmindStatus.status === 'failed' && (
+                <div className="error-banner">
+                    <div className="error-content">
+                        <span className="error-icon">⚠️</span>
+                        <div className="error-text">
+                            <strong>Overmind Failed to Start</strong>
+                            <div className="error-detail">{overmindStatus.error}</div>
+                        </div>
+                    </div>
                 </div>
-            </div>
+            )}
             
             <div className="process-bar">
                 {Object.entries(processes).length === 0 ? (
