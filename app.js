@@ -5,7 +5,29 @@ const { createRoot } = ReactDOM;
 // WebSocket connection
 let ws = null;
 
-// ANSI color mapping - comprehensive color support
+// 256-color palette (standard terminal colors)
+const ansi256Colors = [
+    // 0-15: Standard colors
+    '#000000', '#800000', '#008000', '#808000', '#000080', '#800080', '#008080', '#c0c0c0',
+    '#808080', '#ff0000', '#00ff00', '#ffff00', '#0000ff', '#ff00ff', '#00ffff', '#ffffff',
+    
+    // 16-231: 216 colors (6x6x6 color cube)
+    ...Array.from({length: 216}, (_, i) => {
+        const r = Math.floor(i / 36);
+        const g = Math.floor((i % 36) / 6);
+        const b = i % 6;
+        const toHex = n => n === 0 ? '00' : (55 + n * 40).toString(16).padStart(2, '0');
+        return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    }),
+    
+    // 232-255: Grayscale
+    ...Array.from({length: 24}, (_, i) => {
+        const gray = (8 + i * 10).toString(16).padStart(2, '0');
+        return `#${gray}${gray}${gray}`;
+    })
+];
+
+// Basic ANSI color mapping for 8/16 colors
 const ansiColors = {
     // Standard colors (30-37)
     '30': '#000000', // black
@@ -56,7 +78,7 @@ const ansiToHtml = (text) => {
     
     // Debug: Log when we encounter ANSI sequences
     if (text.includes('\x1b[') || text.includes('\u001b[')) {
-        console.log('ANSI Debug - Original text:', JSON.stringify(text));
+        console.log('ANSI Debug - Processing line:', JSON.stringify(text));
     }
     
     // Handle both \x1b and \u001b escape sequences
@@ -74,29 +96,62 @@ const ansiToHtml = (text) => {
         
         console.log('ANSI Debug - Found codes:', codeList);
         
-        for (const code of codeList) {
+        // Process codes sequentially, handling 256-color sequences
+        for (let i = 0; i < codeList.length; i++) {
+            const code = codeList[i];
             const codeNum = parseInt(code, 10);
             
+            // Handle 256-color foreground: 38;5;N
+            if (codeNum === 38 && i + 2 < codeList.length && codeList[i + 1] === '5') {
+                const colorIndex = parseInt(codeList[i + 2], 10);
+                if (colorIndex >= 0 && colorIndex < ansi256Colors.length) {
+                    const color = ansi256Colors[colorIndex];
+                    styles.push(`color: ${color}`);
+                    console.log(`ANSI Debug - Applied 256-color ${colorIndex}: ${color}`);
+                    i += 2; // Skip the next two codes (5 and colorIndex)
+                    continue;
+                }
+            }
+            
+            // Handle 256-color background: 48;5;N
+            if (codeNum === 48 && i + 2 < codeList.length && codeList[i + 1] === '5') {
+                const colorIndex = parseInt(codeList[i + 2], 10);
+                if (colorIndex >= 0 && colorIndex < ansi256Colors.length) {
+                    const color = ansi256Colors[colorIndex];
+                    styles.push(`background-color: ${color}`);
+                    console.log(`ANSI Debug - Applied 256-bg-color ${colorIndex}: ${color}`);
+                    i += 2; // Skip the next two codes (5 and colorIndex)
+                    continue;
+                }
+            }
+            
+            // Handle basic 8/16 colors
             if (ansiColors[code]) {
                 styles.push(`color: ${ansiColors[code]}`);
-                console.log(`ANSI Debug - Applied color ${code}: ${ansiColors[code]}`);
+                console.log(`ANSI Debug - Applied basic color ${code}: ${ansiColors[code]}`);
             } else if (ansiBgColors[code]) {
                 styles.push(`background-color: ${ansiBgColors[code]}`);
-                console.log(`ANSI Debug - Applied bg color ${code}: ${ansiBgColors[code]}`);
+                console.log(`ANSI Debug - Applied basic bg color ${code}: ${ansiBgColors[code]}`);
             } else if (codeNum === 1) {
                 styles.push('font-weight: bold');
+                console.log('ANSI Debug - Applied bold');
             } else if (codeNum === 3) {
                 styles.push('font-style: italic');
+                console.log('ANSI Debug - Applied italic');
             } else if (codeNum === 4) {
                 styles.push('text-decoration: underline');
+                console.log('ANSI Debug - Applied underline');
             } else if (codeNum === 22) {
                 styles.push('font-weight: normal');
+                console.log('ANSI Debug - Reset bold');
             } else if (codeNum === 23) {
                 styles.push('font-style: normal');
+                console.log('ANSI Debug - Reset italic');
             } else if (codeNum === 24) {
                 styles.push('text-decoration: none');
+                console.log('ANSI Debug - Reset underline');
             } else {
-                console.log(`ANSI Debug - Unknown code: ${code}`);
+                console.log(`ANSI Debug - Unknown/unhandled code: ${code}`);
             }
         }
         
@@ -110,7 +165,7 @@ const ansiToHtml = (text) => {
     });
     
     if (text.includes('\x1b[') || text.includes('\u001b[')) {
-        console.log('ANSI Debug - Final HTML:', html);
+        console.log('ANSI Debug - Final HTML result:', html);
     }
     
     return html;

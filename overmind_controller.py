@@ -76,9 +76,7 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
 
             # Get environment with color forcing
             env = self.get_colored_env()
-            force_color = env.get('FORCE_COLOR')
-            term = env.get('TERM')
-            print(f"Starting overmind with env: FORCE_COLOR={force_color}, TERM={term}")
+            print("Starting overmind with color support")
 
             # Start overmind process with color-forcing environment
             self.process = await asyncio.create_subprocess_exec(
@@ -236,10 +234,6 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
                 except UnicodeDecodeError:
                     # Fallback to latin-1 if utf-8 fails
                     line_str = line.decode('latin-1', errors='replace').rstrip('\n')
-
-                # Debug: Show ANSI sequences that are being received
-                if '\x1b[' in line_str:
-                    print(f"DEBUG: ANSI found in line: {repr(line_str)}")
 
                 if line_str and self.output_callback:
                     self.output_callback(line_str)
