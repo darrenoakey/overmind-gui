@@ -264,6 +264,19 @@ const ContextMenu = ({ contextMenu, processes, onProcessAction }) => {
     const process = processes[contextMenu.processName];
     const status = process ? process.status : 'unknown';
     
+    // Don't show any actions if status is unknown
+    if (status === 'unknown') {
+        return React.createElement('div', {
+            className: 'context-menu',
+            style: { left: contextMenu.x, top: contextMenu.y }
+        },
+            React.createElement('div', {
+                className: 'context-menu-item',
+                style: { opacity: 0.6, cursor: 'default' }
+            }, '⏳ Action in progress...')
+        );
+    }
+    
     // Determine which actions to show based on status
     let actions = [];
     
@@ -273,16 +286,16 @@ const ContextMenu = ({ contextMenu, processes, onProcessAction }) => {
             { label: '🛑 Stop', action: 'stop' },
             { label: '🔄 Restart', action: 'restart' }
         ];
-    } else {
-        // If stopped, dead, or unknown, show start (which maps to restart)
+    } else if (status === 'stopped' || status === 'dead') {
+        // If stopped or dead, only show start (no restart option)
         actions = [
             { label: '🟢 Start', action: 'start' }
         ];
-        
-        // Also show restart if it's in a known stopped state
-        if (status === 'stopped' || status === 'dead') {
-            actions.push({ label: '🔄 Restart', action: 'restart' });
-        }
+    }
+    
+    // If no actions available, don't show menu
+    if (actions.length === 0) {
+        return null;
     }
     
     return React.createElement('div', {

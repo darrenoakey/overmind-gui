@@ -19,6 +19,9 @@ function App() {
     // Track if we're in the middle of programmatic scrolling to avoid state changes
     const [isProgrammaticScroll, setIsProgrammaticScroll] = useState(false);
     
+    // Track pending actions for status refresh
+    const [pendingActions, setPendingActions] = useState(new Set());
+    
     // Refs
     const outputRef = useRef(null);
     
@@ -90,6 +93,11 @@ function App() {
         const handleActionResult = (data) => {
             if (!data.success) {
                 alert(`Failed to ${data.action} ${data.process_name}`);
+                // If action failed, immediately refresh status to get current state
+                requestStatusRefresh();
+            } else {
+                // Action succeeded, schedule delayed status refresh
+                scheduleStatusRefresh(data.process_name);
             }
         };
         
@@ -167,11 +175,44 @@ function App() {
         sendMessage('toggle_process', { process_name: processName });
     };
     
+    // Request status refresh from backend
+    const requestStatusRefresh = () => {
+        sendMessage('get_initial_state', {});
+    };
+    
+    // Schedule status refresh after action completes + 2 seconds
+    const scheduleStatusRefresh = (processName) => {
+        // Add to pending actions
+        setPendingActions(prev => new Set(prev).add(processName));
+        
+        // Schedule refresh after 2 seconds
+        setTimeout(() => {
+            requestStatusRefresh();
+            // Remove from pending actions
+            setPendingActions(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(processName);
+                return newSet;
+            });
+        }, 2000);
+    };
+    
     const handleProcessAction = (processName, action) => {
+        // Immediately set status to unknown
+        setProcesses(prev => ({
+            ...prev,
+            [processName]: {
+                ...prev[processName],
+                status: 'unknown'
+            }
+        }));
+        
+        // Close context menu immediately
+        setContextMenu(null);
+        
         // Map "start" to "restart" since overmind doesn't have a start command
         const actualAction = action === 'start' ? 'restart' : action;
         sendMessage('process_action', { process_name: processName, action: actualAction });
-        setContextMenu(null);
     };
     
     const clearOutput = () => {
