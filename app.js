@@ -19,9 +19,6 @@ function App() {
     // Track if we're in the middle of programmatic scrolling to avoid state changes
     const [isProgrammaticScroll, setIsProgrammaticScroll] = useState(false);
     
-    // Track pending actions for status refresh
-    const [pendingActions, setPendingActions] = useState(new Set());
-    
     // Refs
     const outputRef = useRef(null);
     
@@ -97,7 +94,7 @@ function App() {
                 requestStatusRefresh();
             } else {
                 // Action succeeded, schedule delayed status refresh
-                scheduleStatusRefresh(data.process_name);
+                scheduleStatusRefresh();
             }
         };
         
@@ -181,29 +178,38 @@ function App() {
     };
     
     // Schedule status refresh after action completes + 2 seconds
-    const scheduleStatusRefresh = (processName) => {
-        // Add to pending actions
-        setPendingActions(prev => new Set(prev).add(processName));
-        
+    const scheduleStatusRefresh = () => {
         // Schedule refresh after 2 seconds
         setTimeout(() => {
             requestStatusRefresh();
-            // Remove from pending actions
-            setPendingActions(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(processName);
-                return newSet;
-            });
         }, 2000);
     };
     
+    // Get the expected target state for an action
+    const getTargetState = (action, currentStatus) => {
+        switch (action) {
+            case 'start':
+            case 'restart':
+                return 'running';
+            case 'stop':
+                return 'stopped';
+            default:
+                return currentStatus; // No change
+        }
+    };
+    
     const handleProcessAction = (processName, action) => {
-        // Immediately set status to unknown
+        // Get the current process status
+        const process = processes[processName];
+        const currentStatus = process ? process.status : 'unknown';
+        
+        // Immediately update UI to show expected target state
+        const targetStatus = getTargetState(action, currentStatus);
         setProcesses(prev => ({
             ...prev,
             [processName]: {
                 ...prev[processName],
-                status: 'unknown'
+                status: targetStatus
             }
         }));
         

@@ -152,12 +152,12 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
                 # Send SIGTERM to overmind
                 self.process.send_signal(signal.SIGTERM)
 
-                # Wait up to 15 seconds for graceful shutdown
+                # Wait up to 30 seconds for graceful shutdown (increased from 15)
                 try:
-                    await asyncio.wait_for(self.process.wait(), timeout=15)
+                    await asyncio.wait_for(self.process.wait(), timeout=30)
                     print("Overmind shut down gracefully")
                 except asyncio.TimeoutError:
-                    print("Overmind didn't shut down gracefully within 15 seconds, sending SIGKILL")
+                    print("Overmind didn't shut down gracefully within 30 seconds, sending SIGKILL")
                     self.process.kill()
                     await self.process.wait()
                     print("Overmind was force-killed")

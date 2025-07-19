@@ -256,26 +256,13 @@ const Footer = ({
     );
 };
 
-// Context menu component - now shows relevant actions based on process status
+// Context menu component - shows relevant actions based on process status
 const ContextMenu = ({ contextMenu, processes, onProcessAction }) => {
     if (!contextMenu) return null;
     
     // Get the process info to determine what actions to show
     const process = processes[contextMenu.processName];
     const status = process ? process.status : 'unknown';
-    
-    // Don't show any actions if status is unknown
-    if (status === 'unknown') {
-        return React.createElement('div', {
-            className: 'context-menu',
-            style: { left: contextMenu.x, top: contextMenu.y }
-        },
-            React.createElement('div', {
-                className: 'context-menu-item',
-                style: { opacity: 0.6, cursor: 'default' }
-            }, '⏳ Action in progress...')
-        );
-    }
     
     // Determine which actions to show based on status
     let actions = [];

@@ -73,11 +73,6 @@ body {
     }
 }
 
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-}
-
 .app {
     height: 100vh;
     display: flex;
@@ -187,11 +182,10 @@ body {
     box-shadow: 0 0 12px rgba(108, 117, 125, 0.8);
 }
 
-/* Unknown status - pulsing orange to indicate action in progress */
-.process-button.unknown::before {
+/* Default/unknown status - just orange, no animation */
+.process-button:not(.running):not(.dead):not(.stopped)::before {
     background: var(--unknown-color);
     box-shadow: 0 0 12px rgba(255, 165, 0, 0.8);
-    animation: pulse 1.5s ease-in-out infinite;
 }
 
 /* Hover effect - only opacity change, no movement */

@@ -286,13 +286,14 @@ async def cleanup(app_instance, _loop):
     app_instance.ctx.running = False
     shutdown_event.set()
 
-    # Stop overmind controller first and WAIT for it
+    # Stop overmind controller first and WAIT for it - increased timeout to 35s
+    # to allow for the 30s graceful shutdown + 5s buffer
     if app_instance.ctx.overmind_controller:
         print("Stopping overmind controller...")
         try:
             await asyncio.wait_for(
                 app_instance.ctx.overmind_controller.stop(),
-                timeout=20.0
+                timeout=35.0  # Increased from 20s to accommodate 30s graceful shutdown
             )
             print("Overmind controller stopped")
         except asyncio.TimeoutError:
