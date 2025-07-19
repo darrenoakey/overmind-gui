@@ -256,9 +256,14 @@ def on_window_closing():
 
 
 # -----------------------------------------------------------------------------
-# Lifecycle hooks
+# Lifecycle hooks using proper Sanic event decorators
+# 
+# IMPORTANT: DO NOT use @app.listener() - this is the old, deprecated way!
+# Use the proper event decorators like @app.before_server_start instead.
+# The listener approach can cause race conditions and inconsistent behavior.
 # -----------------------------------------------------------------------------
-@app.listener("before_server_start")
+
+@app.before_server_start
 async def setup(app_instance, loop):
     """Set up the application before server starts"""
     app_instance.ctx.running = True
@@ -275,50 +280,53 @@ async def setup(app_instance, loop):
     app_instance.ctx.tasks.extend([t1, t2])
 
 
-@app.listener("before_server_stop")
+@app.before_server_stop
 async def cleanup(app_instance, _loop):
-    """Clean up resources before server stops"""
+    """Clean up resources before server stops - MUST wait for everything to complete"""
     if app_instance.ctx.shutdown_complete:
         return  # Already cleaned up
 
-    print("Starting cleanup...")
+    print("Starting cleanup - waiting for ALL processes to stop...")
     app_instance.ctx.shutdown_initiated = True
     app_instance.ctx.running = False
     shutdown_event.set()
 
-    # Stop overmind controller first and WAIT for it - increased timeout to 35s
-    # to allow for the 30s graceful shutdown + 5s buffer
+    # Step 1: Stop overmind controller and WAIT for it to completely finish
     if app_instance.ctx.overmind_controller:
         print("Stopping overmind controller...")
         try:
-            await asyncio.wait_for(
-                app_instance.ctx.overmind_controller.stop(),
-                timeout=35.0  # Increased from 20s to accommodate 30s graceful shutdown
-            )
-            print("Overmind controller stopped")
-        except asyncio.TimeoutError:
-            print("Timeout waiting for overmind controller to stop")
-        except RuntimeError as e:
-            print(f"Runtime error stopping overmind controller: {e}")
+            # This MUST complete before we continue
+            await app_instance.ctx.overmind_controller.stop()
+            print("✓ Overmind controller stopped completely")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            print(f"Error stopping overmind controller: {e}")
+        finally:
+            app_instance.ctx.overmind_controller = None
 
-    # Cancel and await tasks
+    # Step 2: Cancel background tasks
     print("Cancelling background tasks...")
-    for t in app_instance.ctx.tasks:
-        if not t.done():
-            t.cancel()
+    for i, task in enumerate(app_instance.ctx.tasks):
+        if not task.done():
+            print(f"Cancelling task {i+1}/{len(app_instance.ctx.tasks)}")
+            task.cancel()
 
-    # Wait for tasks to complete with timeout
-    try:
-        await asyncio.wait_for(
-            asyncio.gather(*app_instance.ctx.tasks, return_exceptions=True),
-            timeout=10.0
-        )
-    except asyncio.TimeoutError:
-        print("Timeout waiting for tasks to complete")
+    # Step 3: Wait for ALL tasks to complete with individual timeouts
+    if app_instance.ctx.tasks:
+        print("Waiting for background tasks to complete...")
+        for i, task in enumerate(app_instance.ctx.tasks):
+            try:
+                await asyncio.wait_for(task, timeout=10.0)
+                print(f"✓ Task {i+1}/{len(app_instance.ctx.tasks)} completed")
+            except asyncio.TimeoutError:
+                print(f"⚠ Task {i+1} timed out")
+            except asyncio.CancelledError:
+                print(f"✓ Task {i+1} cancelled")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                print(f"⚠ Task {i+1} error: {e}")
 
     app_instance.ctx.tasks.clear()
     app_instance.ctx.shutdown_complete = True
-    print("Cleanup completed")
+    print("✓ Cleanup completed - all processes stopped")
 
 
 # -----------------------------------------------------------------------------

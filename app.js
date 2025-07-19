@@ -205,13 +205,21 @@ function App() {
         
         // Immediately update UI to show expected target state
         const targetStatus = getTargetState(action, currentStatus);
-        setProcesses(prev => ({
-            ...prev,
-            [processName]: {
-                ...prev[processName],
-                status: targetStatus
-            }
-        }));
+        
+        console.log(`Action: ${action} on ${processName}, setting status to: ${targetStatus}`);
+        
+        // Force immediate state update with functional update to ensure re-render
+        setProcesses(prevProcesses => {
+            const updatedProcesses = {
+                ...prevProcesses,
+                [processName]: {
+                    ...prevProcesses[processName],
+                    status: targetStatus
+                }
+            };
+            console.log('Updated processes state:', updatedProcesses);
+            return updatedProcesses;
+        });
         
         // Close context menu immediately
         setContextMenu(null);
@@ -339,6 +347,11 @@ function App() {
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
     }, [searchText]);
+    
+    // Debug: Log processes state changes
+    useEffect(() => {
+        console.log('Processes state updated:', processes);
+    }, [processes]);
     
     // Show loading screen if not connected
     if (!connected) {
