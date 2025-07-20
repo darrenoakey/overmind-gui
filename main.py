@@ -226,7 +226,7 @@ async def ui_launcher_task(app_instance):
         if app_instance.ctx.running:
             print("UI closed, initiating shutdown...")
             shutdown_event.set()
-            app_instance.stop()
+            asyncio.get_event_loop().call_soon_threadsafe(app_instance.stop)
 
 
 # -----------------------------------------------------------------------------
