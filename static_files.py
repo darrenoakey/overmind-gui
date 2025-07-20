@@ -12,7 +12,7 @@ from sanic.exceptions import NotFound
 
 def setup_static_routes(app: Sanic):
     """Setup routes for serving static files"""
-    
+
     # Get the directory where this script is located
     script_dir = os.path.dirname(__file__)
 
@@ -20,7 +20,8 @@ def setup_static_routes(app: Sanic):
     async def index(_request):
         """Serve the main HTML page"""
         try:
-            return await file(os.path.join(script_dir, "index.html"), mime_type="text/html")
+            return await file(os.path.join(script_dir, "index.html"),
+                             mime_type="text/html")
         except FileNotFoundError as exc:
             raise NotFound("index.html not found") from exc
 
@@ -28,7 +29,8 @@ def setup_static_routes(app: Sanic):
     async def styles(_request):
         """Serve CSS file"""
         try:
-            return await file(os.path.join(script_dir, "styles.css"), mime_type="text/css")
+            return await file(os.path.join(script_dir, "styles.css"),
+                             mime_type="text/css")
         except FileNotFoundError:
             return text("/* CSS file not found */", content_type="text/css", status=404)
 
@@ -36,7 +38,8 @@ def setup_static_routes(app: Sanic):
     async def app_js(_request):
         """Serve main JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "app.js"), mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "app.js"),
+                             mime_type="application/javascript")
         except FileNotFoundError:
             return text("// app.js file not found",
                        content_type="application/javascript", status=404)
@@ -45,7 +48,8 @@ def setup_static_routes(app: Sanic):
     async def utils_js(_request):
         """Serve utility JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "utils.js"), mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "utils.js"),
+                             mime_type="application/javascript")
         except FileNotFoundError:
             return text("// utils.js file not found",
                        content_type="application/javascript", status=404)
@@ -54,7 +58,8 @@ def setup_static_routes(app: Sanic):
     async def search_js(_request):
         """Serve search JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "search.js"), mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "search.js"),
+                             mime_type="application/javascript")
         except FileNotFoundError:
             return text("// search.js file not found",
                        content_type="application/javascript", status=404)
@@ -63,7 +68,8 @@ def setup_static_routes(app: Sanic):
     async def websocket_js(_request):
         """Serve websocket JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "websocket.js"), mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "websocket.js"),
+                             mime_type="application/javascript")
         except FileNotFoundError:
             return text("// websocket.js file not found",
                        content_type="application/javascript", status=404)
@@ -72,7 +78,8 @@ def setup_static_routes(app: Sanic):
     async def components_js(_request):
         """Serve components JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "components.js"), mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "components.js"),
+                             mime_type="application/javascript")
         except FileNotFoundError:
             return text("// components.js file not found",
                        content_type="application/javascript", status=404)
@@ -81,7 +88,8 @@ def setup_static_routes(app: Sanic):
     async def favicon(_request):
         """Serve favicon or return 404"""
         try:
-            return await file(os.path.join(script_dir, "favicon.ico"), mime_type="image/x-icon")
+            return await file(os.path.join(script_dir, "favicon.ico"),
+                             mime_type="image/x-icon")
         except FileNotFoundError as exc:
             raise NotFound("Favicon not available") from exc
 
