@@ -233,6 +233,7 @@ const Footer = ({
         React.createElement('div', { className: 'stats' },
             React.createElement('span', null, `Processes: ${stats.total || 0}`),
             React.createElement('span', null, `Running: ${stats.running || 0}`),
+            stats.broken > 0 && React.createElement('span', null, `Broken: ${stats.broken || 0}`),
             React.createElement('span', null, `Selected: ${stats.selected || 0}`),
             React.createElement('span', null, `Lines: ${filteredOutput.length}/${output.length}`)
         ),
@@ -267,8 +268,8 @@ const ContextMenu = ({ contextMenu, processes, onProcessAction }) => {
     // Determine which actions to show based on status
     let actions = [];
     
-    if (status === 'running') {
-        // If running, show stop and restart
+    if (status === 'running' || status === 'broken') {
+        // If running or broken, show stop and restart
         actions = [
             { label: '🛑 Stop', action: 'stop' },
             { label: '🔄 Restart', action: 'restart' }

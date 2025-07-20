@@ -8,6 +8,7 @@
     --light-color: #f8f9fa;
     --dark-color: #343a40;
     --secondary-color: #6c757d;
+    --broken-color: #8e44ad; /* Purple for broken status */
     --gradient-start: #667eea;
     --gradient-end: #764ba2;
     --paper-color: #faf8f5;
@@ -182,8 +183,13 @@ body {
     box-shadow: 0 0 12px rgba(108, 117, 125, 0.8);
 }
 
+.process-button.broken::before {
+    background: var(--broken-color);
+    box-shadow: 0 0 12px rgba(142, 68, 173, 0.8);
+}
+
 /* Default/unknown status - just orange, no animation */
-.process-button:not(.running):not(.dead):not(.stopped)::before {
+.process-button:not(.running):not(.dead):not(.stopped):not(.broken)::before {
     background: var(--unknown-color);
     box-shadow: 0 0 12px rgba(255, 165, 0, 0.8);
 }

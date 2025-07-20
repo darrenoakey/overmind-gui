@@ -117,6 +117,7 @@ class WebSocketManager:
             return
 
         overmind_controller = app.ctx.overmind_controller
+        process_manager = app.ctx.process_manager
         success = False
 
         if action == "start":
@@ -125,6 +126,10 @@ class WebSocketManager:
             success = await overmind_controller.stop_process(process_name)
         elif action == "restart":
             success = await overmind_controller.restart_process(process_name)
+            # Clear broken status when restarting
+            if success:
+                process_manager.restart_process(process_name)
+                print(f"Cleared broken status for {process_name} after restart")
 
         # Send action result
         await self.send_to_client(ws, "action_result", {
@@ -256,6 +261,10 @@ class MockProcessManager:  # pylint: disable=too-few-public-methods
 
     def clear_all_output(self):
         """Mock clear all output"""
+        return None
+
+    def restart_process(self, name):  # pylint: disable=unused-argument
+        """Mock restart process"""
         return None
 
     def to_dict(self):
