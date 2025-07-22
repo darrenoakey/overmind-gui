@@ -67,7 +67,14 @@ function App() {
         };
         
         const handleOutputLine = (data) => {
-            setOutput(prev => [...prev, data.line]);
+            setOutput(prev => {
+                const newOutput = [...prev, data.line];
+                // Limit to 1000 lines maximum - remove oldest lines if needed
+                if (newOutput.length > 1000) {
+                    return newOutput.slice(-1000);
+                }
+                return newOutput;
+            });
         };
         
         const handleOutputUpdated = (data) => {
