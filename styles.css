@@ -339,6 +339,8 @@ body {
     white-space: pre-wrap;
     word-break: break-word;
     background: var(--paper-color);
+    user-select: text; /* Allow text selection */
+    cursor: text; /* Show text cursor when hovering over output */
 }
 
 .output::-webkit-scrollbar {
@@ -364,6 +366,7 @@ body {
     padding: 1px 4px;
     border-radius: 3px;
     position: relative;
+    user-select: text; /* Ensure individual lines are selectable */
 }
 
 /* Improved search highlighting */
@@ -513,6 +516,7 @@ body {
     font-size: 14px;
     font-weight: 500;
     transition: all 0.2s ease;
+    user-select: none; /* Prevent selection of menu items */
 }
 
 .context-menu-item:last-child {

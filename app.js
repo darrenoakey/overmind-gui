@@ -205,7 +205,29 @@ function App() {
         }
     };
     
+    // Focus on a single process (select it and deselect all others)
+    const focusProcess = (targetProcessName) => {
+        // First deselect all processes
+        Object.keys(processes).forEach(name => {
+            if (processes[name].selected && name !== targetProcessName) {
+                toggleProcess(name);
+            }
+        });
+        
+        // Then ensure the target process is selected
+        if (!processes[targetProcessName]?.selected) {
+            toggleProcess(targetProcessName);
+        }
+    };
+    
     const handleProcessAction = (processName, action) => {
+        if (action === 'focus') {
+            // Handle focus action - select only this process
+            focusProcess(processName);
+            setContextMenu(null);
+            return;
+        }
+        
         // Get the current process status
         const process = processes[processName];
         const currentStatus = process ? process.status : 'unknown';

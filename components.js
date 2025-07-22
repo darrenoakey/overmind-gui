@@ -281,10 +281,8 @@ const ContextMenu = ({ contextMenu, processes, onProcessAction }) => {
         ];
     }
     
-    // If no actions available, don't show menu
-    if (actions.length === 0) {
-        return null;
-    }
+    // Always add the focus action as the first option
+    actions.unshift({ label: '🎯 Focus', action: 'focus' });
     
     return React.createElement('div', {
         className: 'context-menu',
