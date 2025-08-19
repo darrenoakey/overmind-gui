@@ -193,28 +193,37 @@ class UIManager {
     }
     
     /**
-     * Apply filter to lines (immediate CSS hiding)
+     * Apply filter to lines (optimized with batched DOM operations)
      */
     applyFilter(filterText) {
         const filter = filterText.trim().toLowerCase();
         this.isFilterActive = filter.length > 0;
         
-        const lineElements = this.elements.outputLines.querySelectorAll('.output-line');
+        const lines = this.elements.outputLines.children;
         let visibleCount = 0;
         
-        lineElements.forEach(lineElement => {
+        // Batch process all lines
+        for (let i = 0; i < lines.length; i++) {
+            const lineElement = lines[i];
             const lineText = window.AnsiUtils.stripAnsiCodes(lineElement.textContent).toLowerCase();
-            const isVisible = !this.isFilterActive || lineText.includes(filter);
+            const shouldBeVisible = !this.isFilterActive || lineText.includes(filter);
             
-            if (isVisible) {
+            // Only modify DOM if class needs to change
+            const isCurrentlyHidden = lineElement.classList.contains('filtered-hidden');
+            
+            if (shouldBeVisible && isCurrentlyHidden) {
                 lineElement.classList.remove('filtered-hidden');
-                visibleCount++;
-            } else {
+            } else if (!shouldBeVisible && !isCurrentlyHidden) {
                 lineElement.classList.add('filtered-hidden');
             }
-        });
+            
+            // Count visible lines (not hidden by filter AND not hidden by process selection)
+            if (shouldBeVisible && !lineElement.classList.contains('process-hidden')) {
+                visibleCount++;
+            }
+        }
         
-        // Update line count to show visible lines
+        // Update line count once at the end
         this.updateDisplayedLineCount(visibleCount);
     }
     
@@ -264,22 +273,30 @@ class UIManager {
     }
     
     /**
-     * Highlight all search matches with neon yellow
+     * Highlight all search matches with neon yellow (optimized)
      */
     highlightAllMatches(searchTerm) {
-        const lineElements = this.elements.outputLines.querySelectorAll('.output-line');
+        const lines = this.elements.outputLines.children;
         
-        lineElements.forEach(lineElement => {
+        // Batch process all lines
+        for (let i = 0; i < lines.length; i++) {
+            const lineElement = lines[i];
             const originalHtml = lineElement.dataset.originalHtml || lineElement.innerHTML;
             lineElement.dataset.originalHtml = originalHtml;
             
             if (this.isSearchActive) {
                 const highlightedHtml = window.AnsiUtils.highlightSearchInHtml(originalHtml, searchTerm);
-                lineElement.innerHTML = highlightedHtml;
+                // Only update innerHTML if it's actually different
+                if (lineElement.innerHTML !== highlightedHtml) {
+                    lineElement.innerHTML = highlightedHtml;
+                }
             } else {
-                lineElement.innerHTML = originalHtml;
+                // Only update innerHTML if it's actually different
+                if (lineElement.innerHTML !== originalHtml) {
+                    lineElement.innerHTML = originalHtml;
+                }
             }
-        });
+        }
     }
     
     /**
@@ -571,7 +588,7 @@ class UIManager {
             this.scrollToBottom();
         }
         
-        // Update displayed line count
+        // Update displayed line count (do this for every line to keep count accurate)
         this.updateDisplayedLineCount(this.getVisibleLineCount());
         
         // Update search matches if search is active (but don't re-run full search, just check this line)
@@ -627,36 +644,130 @@ class UIManager {
     }
     
     /**
-     * Add multiple output lines efficiently
+     * Add multiple output lines efficiently with batched DOM operations
      */
     addOutputLines(lines) {
-        lines.forEach(line => this.addOutputLine(line));
+        if (lines.length === 0) return;
+        
+        if (lines.length === 1) {
+            // Single line - use existing method
+            this.addOutputLine(lines[0]);
+            return;
+        }
+        
+        // Batch processing for multiple lines
+        const fragment = document.createDocumentFragment();
+        const elementsToRemove = [];
+        
+        // Process all lines and build fragment
+        for (const line of lines) {
+            // Add to local buffer
+            this.currentLines.push(line);
+            this.lineIdMap.set(line.id, line);
+            
+            // Create DOM element
+            const lineElement = this.createLineElement(line);
+            fragment.appendChild(lineElement);
+            
+            // Track elements to remove if over limit
+            if (this.currentLines.length > this.maxLines) {
+                const removedLine = this.currentLines.shift();
+                this.lineIdMap.delete(removedLine.id);
+                
+                // Find DOM element to remove
+                const oldElement = this.elements.outputLines.querySelector(`[data-line-id="${removedLine.id}"]`);
+                if (oldElement) {
+                    elementsToRemove.push(oldElement);
+                }
+            }
+        }
+        
+        // Batch DOM operations
+        // 1. Remove old elements first
+        elementsToRemove.forEach(el => el.remove());
+        
+        // 2. Add all new elements at once
+        this.elements.outputLines.appendChild(fragment);
+        
+        // 3. Update counts once at the end
+        this.updateDisplayedLineCount(this.getVisibleLineCount());
+        
+        // 4. Auto-scroll if enabled
+        if (this.autoScroll) {
+            this.scrollToBottom();
+        }
+        
+        // 5. Update search matches if needed (batch process)
+        if (this.isSearchActive) {
+            this.updateSearchMatchesForNewLines(lines);
+        }
     }
     
     /**
-     * Get count of visible lines (not hidden by filter or process selection)
+     * Batch update search matches for new lines
+     */
+    updateSearchMatchesForNewLines(lines) {
+        const searchTerm = this.elements.searchInput.value.trim().toLowerCase();
+        if (!searchTerm) return;
+        
+        // Process all new lines for search matches
+        lines.forEach(line => {
+            const lineElement = this.elements.outputLines.querySelector(`[data-line-id="${line.id}"]`);
+            if (lineElement) {
+                const lineText = window.AnsiUtils.stripAnsiCodes(lineElement.textContent).toLowerCase();
+                if (lineText.includes(searchTerm)) {
+                    this.searchMatches.push({
+                        element: lineElement,
+                        lineId: line.id
+                    });
+                }
+            }
+        });
+    }
+    
+    /**
+     * Get count of visible lines (optimized - cache when possible)
      */
     getVisibleLineCount() {
-        return this.elements.outputLines.querySelectorAll('.output-line:not(.filtered-hidden):not(.process-hidden)').length;
+        // For performance, we could maintain counters instead of querying DOM
+        // But for now, keep the query but make it more efficient
+        const lines = this.elements.outputLines.children;
+        let count = 0;
+        
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (!line.classList.contains('filtered-hidden') && 
+                !line.classList.contains('process-hidden')) {
+                count++;
+            }
+        }
+        
+        return count;
     }
     
     /**
-     * Update line visibility based on selected processes
+     * Update line visibility based on selected processes (optimized)
      */
     updateLineVisibility() {
-        const lineElements = this.elements.outputLines.querySelectorAll('.output-line');
+        const lines = this.elements.outputLines.children;
         
-        lineElements.forEach(lineElement => {
+        // Batch DOM class changes
+        for (let i = 0; i < lines.length; i++) {
+            const lineElement = lines[i];
             const process = lineElement.dataset.process;
             
             if (this.selectedProcesses.has(process)) {
-                lineElement.classList.remove('process-hidden');
+                if (lineElement.classList.contains('process-hidden')) {
+                    lineElement.classList.remove('process-hidden');
+                }
             } else {
-                lineElement.classList.add('process-hidden');
+                if (!lineElement.classList.contains('process-hidden')) {
+                    lineElement.classList.add('process-hidden');
+                }
             }
-        });
+        }
         
-        // Update displayed line count
+        // Update displayed line count once at the end
         this.updateDisplayedLineCount(this.getVisibleLineCount());
     }
     
