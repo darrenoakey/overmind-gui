@@ -44,6 +44,36 @@ def setup_static_routes(app: Sanic):
             return text("// app.js file not found",
                        content_type="application/javascript", status=404)
 
+    @app.route("/polling.js")
+    async def polling_js(_request):
+        """Serve polling JavaScript file"""
+        try:
+            return await file(os.path.join(script_dir, "polling.js"),
+                             mime_type="application/javascript")
+        except FileNotFoundError:
+            return text("// polling.js file not found",
+                       content_type="application/javascript", status=404)
+
+    @app.route("/ui.js")
+    async def ui_js(_request):
+        """Serve UI JavaScript file"""
+        try:
+            return await file(os.path.join(script_dir, "ui.js"),
+                             mime_type="application/javascript")
+        except FileNotFoundError:
+            return text("// ui.js file not found",
+                       content_type="application/javascript", status=404)
+
+    @app.route("/init.js")
+    async def init_js(_request):
+        """Serve initialization JavaScript file"""
+        try:
+            return await file(os.path.join(script_dir, "init.js"),
+                             mime_type="application/javascript")
+        except FileNotFoundError:
+            return text("// init.js file not found",
+                       content_type="application/javascript", status=404)
+
     @app.route("/utils.js")
     async def utils_js(_request):
         """Serve utility JavaScript file"""
@@ -109,8 +139,8 @@ class TestStaticFiles(unittest.TestCase):
 
         # Check that routes were added
         route_names = [route.name for route in app.router.routes_all.values()]
-        expected_routes = ['index', 'styles', 'app_js', 'utils_js',
-                          'search_js', 'websocket_js', 'components_js', 'favicon']
+        expected_routes = ['index', 'styles', 'app_js', 'polling_js', 'ui_js', 'init_js',
+                          'utils_js', 'search_js', 'websocket_js', 'components_js', 'favicon']
 
         for expected_route in expected_routes:
             # Check if any route contains the expected name

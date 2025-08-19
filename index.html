@@ -3,26 +3,123 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Overmind GUI</title>
     <link rel="stylesheet" href="/styles.css">
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
 </head>
 <body>
-    <div id="root">
-        <div class="loading">
-            <h1>Loading Overmind GUI...</h1>
-            <div class="spinner"></div>
+    <div id="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <span class="logo-icon">⚡</span>
+                    <h1 id="app-title">Overmind GUI v<span id="version-number">1</span></h1>
+                    <div class="polling-indicator">
+                        <span id="polling-status" class="polling-dot"></span>
+                        <span class="polling-text">Live</span>
+                    </div>
+                </div>
+                
+                <div class="status-bar">
+                    <div class="status-item">
+                        <span class="status-label">Status:</span>
+                        <span id="overmind-status" class="status-value unknown">Unknown</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Autoscroll:</span>
+                        <span id="autoscroll-indicator" class="status-value autoscroll-on">ON</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Lines:</span>
+                        <span id="line-count" class="status-value">0</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Processes:</span>
+                        <span id="process-count" class="status-value">0</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main content -->
+        <div class="main-content">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+
+                <div class="sidebar-section compact">
+                    <h4>Filter</h4>
+                    <input type="text" id="filter-input" placeholder="Filter output..." class="filter-input">
+                </div>
+
+                <div class="sidebar-section compact">
+                    <h4>Search</h4>
+                    <div class="search-input-group">
+                        <input type="text" id="search-input" placeholder="Search output..." class="search-input">
+                        <button id="search-up-btn" class="btn btn-nav" title="Previous match">▲</button>
+                        <button id="search-down-btn" class="btn btn-nav" title="Next match">▼</button>
+                    </div>
+                    <div class="search-results">
+                        <span id="search-results-text"></span>
+                    </div>
+                </div>
+
+                <div class="sidebar-section">
+                    <div class="processes-header">
+                        <h3>Processes</h3>
+                        <div class="process-quick-controls">
+                            <button id="select-all-btn" class="btn btn-tiny" title="Select All">All</button>
+                            <button id="deselect-all-btn" class="btn btn-tiny" title="Deselect All">None</button>
+                        </div>
+                    </div>
+                    <div id="process-list" class="process-list">
+                        <!-- Processes will be populated here -->
+                    </div>
+                </div>
+
+            </aside>
+
+            <!-- Output panel -->
+            <main class="output-panel">
+                <div id="output-container" class="output-container">
+                    <div id="output-lines" class="output-lines">
+                        <!-- Output lines will be populated here -->
+                    </div>
+                    
+                    <!-- Floating auto-scroll button (only visible when auto-scroll is off) -->
+                    <button id="auto-scroll-btn" class="auto-scroll-btn" title="Enable auto-scroll">
+                        ↓ Scroll to Bottom
+                    </button>
+                </div>
+            </main>
         </div>
     </div>
-    
-    <!-- Load utility modules first -->
-    <script src="/utils.js" type="text/babel"></script>
-    <script src="/search.js" type="text/babel"></script>
-    <script src="/websocket.js" type="text/babel"></script>
-    <script src="/components.js" type="text/babel"></script>
-    
-    <!-- Load main app last -->
-    <script src="/app.js" type="text/babel"></script>
+
+    <!-- Loading overlay -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <p>Loading Overmind GUI...</p>
+        </div>
+    </div>
+
+    <!-- Error modal -->
+    <div id="error-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Error</h3>
+                <button id="error-modal-close" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="error-message"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/utils.js"></script>
+    <script src="/polling.js"></script>
+    <script src="/ui.js"></script>
+    <script src="/init.js"></script>
 </body>
 </html>

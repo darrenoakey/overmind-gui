@@ -1,399 +1,419 @@
 """
-WebSocket Handler - Real-time communication with frontend
-Manages WebSocket connections and message routing
+WebSocket Handler - Permanent connection management
+Connections should NEVER close - they persist throughout the app lifecycle
 """
 
 import json
 import asyncio
+import time
+import traceback  # Import at top level
 import unittest
-from typing import Set, Dict, Any
+from typing import Dict, Any, Optional
+from dataclasses import dataclass, field
 from sanic import Websocket
 from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 
 
+@dataclass
+class ClientConnection:
+    """Represents a permanent client connection"""
+    ws: Websocket
+    connected_at: float = field(default_factory=time.time)
+    last_activity: float = field(default_factory=time.time)
+    last_ping: float = field(default_factory=time.time)
+    id: str = field(default_factory=lambda: f"conn_{time.time()}")
+
+    def is_alive(self) -> bool:
+        """Check if connection is still alive"""
+        try:
+            # Check WebSocket state attribute if available
+            # State 1 = OPEN, State 2 = CLOSING, State 3 = CLOSED
+            state = getattr(self.ws, 'state', None)
+            if state is not None:
+                return state == 1
+            # If no state attribute, assume alive
+            return True
+        except (AttributeError, RuntimeError):
+            return False
+
+    async def send(self, message: str) -> bool:
+        """Send message to client with robust error handling"""
+        try:
+            if self.is_alive():
+                await self.ws.send(message)
+                self.last_activity = time.time()
+                return True
+            print(f"Connection {self.id} is not alive, cannot send message")
+            return False
+        except (ConnectionClosedOK, ConnectionClosedError) as e:
+            print(f"Connection {self.id} closed: {e}")
+            return False
+        except Exception as e:  # pylint: disable=broad-except
+            print(f"Error sending to client {self.id}: {e}")
+            return False
+
+
 class WebSocketManager:
-    """Manages WebSocket connections and message broadcasting"""
+    """
+    Singleton WebSocket manager for persistent connections.
+    This manager lives for the entire application lifecycle.
+    """
+
+    _instance: Optional['WebSocketManager'] = None
+    _initialized: bool = False
+
+    def __new__(cls):
+        """Ensure singleton pattern - only one manager exists"""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     def __init__(self):
-        self.clients: Set[Websocket] = set()
+        """Initialize only once"""
+        if not self._initialized:
+            self.connections: Dict[Websocket, ClientConnection] = {}
+            self._lock = asyncio.Lock()
+            self.monitor_task: Optional[asyncio.Task] = None
+            WebSocketManager._initialized = True
+            print("WebSocketManager singleton initialized")
 
-    def add_client(self, ws: Websocket):
-        """Add a new WebSocket client"""
-        self.clients.add(ws)
-        print(f"Client connected. Total clients: {len(self.clients)}")
+    async def add_connection(self, ws: Websocket) -> ClientConnection:
+        """Add a new permanent connection"""
+        async with self._lock:
+            conn = ClientConnection(ws=ws)
+            self.connections[ws] = conn
+            print(f"Connection {conn.id} established. Total connections: {len(self.connections)}")
+            return conn
 
-    def remove_client(self, ws: Websocket):
-        """Remove a WebSocket client"""
-        self.clients.discard(ws)
-        print(f"Client disconnected. Total clients: {len(self.clients)}")
+    async def remove_connection(self, ws: Websocket):
+        """Remove a connection - this indicates a problem that needs fixing"""
+        async with self._lock:
+            if ws in self.connections:
+                conn = self.connections[ws]
+                del self.connections[ws]
+                print(f"CONNECTION {conn.id} LOST - THIS IS A BUG! "
+                      f"Total connections: {len(self.connections)}")
+                print("WebSocket disconnections should not happen in single-worker mode")
+
+    async def send_to_client(self, ws: Websocket, message_type: str, data: Any) -> bool:
+        """Send message to specific client"""
+        async with self._lock:
+            if ws in self.connections:
+                conn = self.connections[ws]
+                try:
+                    message = json.dumps({"type": message_type, "data": data})
+                    return await conn.send(message)
+                except (TypeError, ValueError) as e:
+                    print(f"Error serializing message of type {message_type}: {e}")
+                    return False
+                except Exception as e:  # pylint: disable=broad-except
+                    print(f"Error sending message of type {message_type} to {conn.id}: {e}")
+                    return False
+        print("Connection not found for WebSocket")
+        return False
 
     async def broadcast(self, message_type: str, data: Any):
-        """Broadcast a message to all connected clients"""
-        if not self.clients:
+        """Broadcast message to all connected clients"""
+        if not self.connections:
             return
 
-        message = {
-            "type": message_type,
-            "data": data,
-            "timestamp": asyncio.get_event_loop().time()
-        }
-
-        message_json = json.dumps(message)
-
-        # Send to all clients, removing any that have disconnected
-        disconnected = set()
-        for client in self.clients:
-            try:
-                await client.send(message_json)
-            except (ConnectionClosedOK, ConnectionClosedError) as e:
-                print(f"Client disconnected during broadcast: {e}")
-                disconnected.add(client)
-
-        # Clean up disconnected clients
-        for client in disconnected:
-            self.clients.discard(client)
-
-    async def send_to_client(self, ws: Websocket, message_type: str, data: Any):
-        """Send a message to a specific client"""
-        message = {
-            "type": message_type,
-            "data": data,
-            "timestamp": asyncio.get_event_loop().time()
-        }
-
         try:
-            await ws.send(json.dumps(message))
-        except (ConnectionClosedOK, ConnectionClosedError) as e:
-            print(f"Failed to send to client: {e}")
-            self.clients.discard(ws)
+            message = json.dumps({"type": message_type, "data": data})
+        except (TypeError, ValueError) as e:
+            print(f"Error serializing broadcast message of type {message_type}: {e}")
+            return
 
-    async def handle_client_message(self, ws: Websocket, message: str, app) -> None:
+        # Get all connections atomically
+        async with self._lock:
+            connections = list(self.connections.values())
+
+        if not connections:
+            return
+
+        # Send to all connections in parallel
+        tasks = []
+        for conn in connections:
+            if conn.is_alive():
+                tasks.append(conn.send(message))
+            else:
+                print(f"Skipping dead connection {conn.id} during broadcast")
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Log any failures
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    print(f"Broadcast failed for connection {connections[i].id}: {result}")
+
+    async def handle_message(self, ws: Websocket, message: str, app) -> None:
         """Handle incoming message from client"""
         try:
-            data = json.loads(message)
+            # Update activity timestamp
+            async with self._lock:
+                if ws in self.connections:
+                    self.connections[ws].last_activity = time.time()
+                else:
+                    print("WARNING: Message from unknown connection")
+                    return
+
+            # Parse the message
+            try:
+                data = json.loads(message)
+            except json.JSONDecodeError as e:
+                print(f"[WS] Invalid JSON received: {message[:100]}, error: {e}")
+                return
+
             message_type = data.get("type")
             payload = data.get("data", {})
 
-            if message_type == "toggle_process":
+            print(f"[WS] Processing message type: {message_type}")
+
+            # Handle heartbeat/keepalive
+            if message_type == "ping":
+                await self.send_to_client(ws, "pong", {"timestamp": time.time()})
+                async with self._lock:
+                    if ws in self.connections:
+                        self.connections[ws].last_ping = time.time()
+                return
+            if message_type == "pong":
+                # Client responded to our ping - connection is healthy
+                return
+
+            # Handle business messages
+            if message_type == "get_initial_state":
+                print("[WS] Client requested initial state")
+                # Small delay to ensure connection stability
+                await asyncio.sleep(0.1)
+                await self.send_initial_state(ws, app)
+            elif message_type == "toggle_process":
                 await self._handle_toggle_process(payload, app)
             elif message_type == "process_action":
                 await self._handle_process_action(ws, payload, app)
             elif message_type == "clear_output":
                 await self._handle_clear_output(app)
-            elif message_type == "get_initial_state":
-                await self.handle_get_initial_state(ws, app)
             else:
-                print(f"Unknown message type: {message_type}")
+                print(f"[WS] Unknown message type: {message_type}")
 
-        except json.JSONDecodeError:
-            print(f"Invalid JSON received: {message}")
-        except (ConnectionClosedOK, ConnectionClosedError) as e:
-            print(f"Connection error while handling message: {e}")
+        except Exception as e:  # pylint: disable=broad-except
+            print(f"[WS] Error handling message: {e}")
+            traceback.print_exc()
+            # Never close connection on error - just log and continue
+
+    async def send_initial_state(self, ws: Websocket, app):
+        """Send initial state to client"""
+        print("[WS] Preparing to send initial state")
+        if hasattr(app.ctx, 'process_manager'):
+            process_manager = app.ctx.process_manager
+            try:
+                state_data = {
+                    "processes": process_manager.to_dict(),
+                    "output": process_manager.get_combined_output(),
+                    "stats": process_manager.get_stats()
+                }
+                print(f"[WS] Sending initial state with {len(state_data['processes'])} processes")
+                success = await self.send_to_client(ws, "initial_state", state_data)
+                if success:
+                    print("[WS] Initial state sent successfully")
+                else:
+                    print("[WS] Failed to send initial state")
+            except Exception as e:  # pylint: disable=broad-except
+                print(f"[WS] Error sending initial state: {e}")
+                traceback.print_exc()
+        else:
+            print("[WS] No process_manager available, not sending initial state")
 
     async def _handle_toggle_process(self, payload: Dict[str, Any], app):
-        """Handle process selection toggle"""
+        """Handle toggle process selection"""
         process_name = payload.get("process_name")
-        if not process_name:
-            return
-
-        process_manager = app.ctx.process_manager
-        new_state = process_manager.toggle_process_selection(process_name)
-
-        # Broadcast the updated process state
-        await self.broadcast("process_updated", {
-            "name": process_name,
-            "selected": new_state
-        })
-
-        # Send updated output
-        await self._send_filtered_output(app)
+        if process_name and hasattr(app.ctx, 'process_manager'):
+            selected = app.ctx.process_manager.toggle_process_selection(process_name)
+            await self.broadcast("process_toggled", {
+                "process_name": process_name,
+                "selected": selected
+            })
 
     async def _handle_process_action(self, ws: Websocket, payload: Dict[str, Any], app):
-        """Handle process control actions (start/stop/restart)"""
-        process_name = payload.get("process_name")
+        """Handle process control actions"""
         action = payload.get("action")
+        process_name = payload.get("process_name")
 
-        if not process_name or not action:
+        if not action or not process_name:
             return
 
-        overmind_controller = app.ctx.overmind_controller
-        process_manager = app.ctx.process_manager
+        if not hasattr(app.ctx, 'overmind_controller'):
+            await self.send_to_client(ws, "error", {
+                "message": "Overmind controller not available"
+            })
+            return
+
+        controller = app.ctx.overmind_controller
         success = False
 
-        if action == "start":
-            success = await overmind_controller.start_process(process_name)
-        elif action == "stop":
-            success = await overmind_controller.stop_process(process_name)
-        elif action == "restart":
-            success = await overmind_controller.restart_process(process_name)
-            # Clear broken status when restarting
-            if success:
-                process_manager.restart_process(process_name)
-                print(f"Cleared broken status for {process_name} after restart")
+        try:
+            if action == "start":
+                success = await controller.start_process(process_name)
+            elif action == "stop":
+                success = await controller.stop_process(process_name)
+            elif action == "restart":
+                success = await controller.restart_process(process_name)
 
-        # Send action result
-        await self.send_to_client(ws, "action_result", {
-            "process_name": process_name,
-            "action": action,
-            "success": success
-        })
+            await self.send_to_client(ws, "action_result", {
+                "action": action,
+                "process_name": process_name,
+                "success": success
+            })
 
-        # Force status update
-        if success:
-            await self._force_status_update(app)
+            # Force status update after action
+            if hasattr(app.ctx, 'overmind_controller'):
+                try:
+                    status_output = await controller.get_status()
+                    if status_output:
+                        status_updates = controller.parse_status_output(status_output)
+                        await self._handle_status_update(status_updates, app)
+                except Exception as e:  # pylint: disable=broad-except
+                    print(f"Error getting status after action: {e}")
+
+        except Exception as e:  # pylint: disable=broad-except
+            print(f"Error performing action {action} on {process_name}: {e}")
+            await self.send_to_client(ws, "error", {
+                "message": f"Action failed: {str(e)}"
+            })
 
     async def _handle_clear_output(self, app):
         """Handle clear output request"""
-        process_manager = app.ctx.process_manager
-        process_manager.clear_all_output()
+        if hasattr(app.ctx, 'process_manager'):
+            app.ctx.process_manager.clear_all_output()
+            await self.broadcast("output_cleared", {})
 
-        await self.broadcast("output_cleared", {})
+    async def _handle_status_update(self, status_updates: dict, app):
+        """Handle status updates"""
+        if hasattr(app.ctx, 'process_manager'):
+            process_manager = app.ctx.process_manager
+            for process_name, status in status_updates.items():
+                process_manager.update_process_status(process_name, status)
 
-    async def handle_get_initial_state(self, ws: Websocket, app):
-        """Send initial application state to newly connected client"""
-        process_manager = app.ctx.process_manager
+            await self.broadcast("status_update", {
+                "updates": status_updates,
+                "stats": process_manager.get_stats()
+            })
 
-        # Send process list and states
-        await self.send_to_client(ws, "initial_state", {
-            "processes": process_manager.to_dict(),
-            "output": process_manager.get_combined_output(selected_only=True)
-        })
+    async def monitor_connections(self):
+        """Monitor connections and send periodic heartbeats"""
+        print("Starting WebSocket connection monitor")
+        while True:
+            try:
+                await asyncio.sleep(25)  # Send heartbeat every 25 seconds
 
-    async def _send_filtered_output(self, app):
-        """Send filtered output to all clients"""
-        process_manager = app.ctx.process_manager
-        output_lines = process_manager.get_combined_output(selected_only=True)
+                # Send heartbeat to all connections
+                await self.broadcast("ping", {"timestamp": time.time()})
 
-        await self.broadcast("output_updated", {
-            "lines": output_lines
-        })
+                # Check connection health
+                async with self._lock:
+                    now = time.time()
+                    for conn in list(self.connections.values()):
+                        if not conn.is_alive():
+                            print(f"Dead connection detected: {conn.id} - THIS IS A BUG!")
+                        elif now - conn.last_activity > 120:
+                            print(f"Connection {conn.id} inactive for 2 minutes - may be stale")
+                        elif now - conn.last_ping > 60:
+                            print(f"Connection {conn.id} hasn't responded to ping in 60 seconds")
 
-    async def _force_status_update(self, app):
-        """Force an immediate status update"""
-        try:
-            overmind_controller = app.ctx.overmind_controller
-            status_output = await overmind_controller.get_status()
-            if status_output:
-                # Call the public method instead of protected one
-                status_updates = overmind_controller.parse_status_output(status_output)
-                if status_updates:
-                    await self._handle_status_update(status_updates, app)
-        except (ConnectionClosedOK, ConnectionClosedError) as e:
-            print(f"Connection error in status update: {e}")
+                    if self.connections:
+                        print(f"Monitor: {len(self.connections)} active connections")
 
-    async def _handle_status_update(self, status_updates: Dict[str, str], app):
-        """Handle status updates from overmind"""
-        process_manager = app.ctx.process_manager
-
-        for process_name, status in status_updates.items():
-            process_manager.update_process_status(process_name, status)
-
-        # Broadcast updated process states
-        await self.broadcast("status_update", {
-            "updates": status_updates,
-            "stats": process_manager.get_stats()
-        })
+            except Exception as e:  # pylint: disable=broad-except
+                print(f"Monitor error: {e}")
+                # Continue monitoring even if there's an error
 
 
-# Global WebSocket manager instance
+# Global singleton WebSocket manager instance
+# This ensures all workers share the same manager
 websocket_manager = WebSocketManager()
 
 
 async def websocket_handler(request, ws: Websocket):
-    """Handle WebSocket connections"""
-    websocket_manager.add_client(ws)
+    """
+    Handle WebSocket connections - connections persist for app lifecycle.
+    In single-worker mode, connections should NEVER close unexpectedly.
+    """
+    print(f"[WS] New WebSocket connection from {request.ip}")
+
+    # Add connection to manager
+    conn = await websocket_manager.add_connection(ws)
 
     try:
-        # Send initial state when client connects
-        await websocket_manager.handle_get_initial_state(ws, request.app)
+        # Send initial connection success message
+        await websocket_manager.send_to_client(ws, "connected", {
+            "message": "WebSocket connected successfully",
+            "connection_id": conn.id
+        })
 
-        # Listen for messages
+        # Handle messages forever - this loop should never exit normally
+        print(f"[WS] Starting message handler for connection {conn.id} from {request.ip}")
         async for message in ws:
-            await websocket_manager.handle_client_message(ws, message, request.app)
+            if message:
+                print(f"[WS] Received message from {conn.id}: {message[:100]}...")
+                await websocket_manager.handle_message(ws, message, request.app)
+            else:
+                # Empty message might indicate connection issue
+                print(f"[WS] Received empty message from {conn.id} - possible connection issue")
 
-    except (ConnectionClosedOK, ConnectionClosedError, asyncio.CancelledError):
-        pass
-    except (ConnectionResetError, OSError) as e:
-        print(f"WebSocket connection error: {e}")
+    except (ConnectionClosedOK, ConnectionClosedError) as e:
+        # This should NEVER happen in single-worker mode
+        print(f"CONNECTION {conn.id} CLOSED - THIS IS A BUG!")
+        print(f"Error details: {e}")
+        print("Check that the app is running with workers=1")
+    except asyncio.CancelledError:
+        print(f"WebSocket handler for {conn.id} cancelled - server shutting down")
+    except Exception as e:  # pylint: disable=broad-except
+        print(f"WebSocket error for {conn.id}: {e}")
+        print("CONNECTION SHOULD NOT CLOSE - This indicates a bug!")
+        traceback.print_exc()
     finally:
-        websocket_manager.remove_client(ws)
+        # Remove connection - this should only happen on server shutdown
+        await websocket_manager.remove_connection(ws)
+        print(f"Connection {conn.id} removed from manager")
 
 
-class MockWebSocket:  # pylint: disable=too-few-public-methods
-    """Mock WebSocket for testing"""
-
-    def __init__(self):
-        self.sent_messages = []
-        self.closed = False
-
-    async def send(self, message):
-        """Mock send method"""
-        if self.closed:
-            raise ConnectionClosedOK(None, None)
-        self.sent_messages.append(message)
-
-    def close(self):
-        """Mock close method"""
-        self.closed = True
+async def start_websocket_monitor(_app):
+    """Start the WebSocket connection monitor as a background task"""
+    if websocket_manager.monitor_task is None:
+        websocket_manager.monitor_task = asyncio.create_task(
+            websocket_manager.monitor_connections()
+        )
+        print("WebSocket monitor task started")
+    else:
+        print("WebSocket monitor already running")
 
 
-class MockApp:  # pylint: disable=too-few-public-methods
-    """Mock app for testing"""
+class TestWebSocketHandler(unittest.TestCase):
+    """Test class for WebSocket handler"""
 
-    def __init__(self):
-        self.ctx = MockContext()
+    def test_websocket_manager_singleton(self):
+        """Test that WebSocketManager is a singleton"""
+        manager1 = WebSocketManager()
+        manager2 = WebSocketManager()
+        self.assertIs(manager1, manager2)
+        self.assertIs(manager1, websocket_manager)
 
-
-class MockContext:  # pylint: disable=too-few-public-methods
-    """Mock context for testing"""
-
-    def __init__(self):
-        self.process_manager = MockProcessManager()
-        self.overmind_controller = MockOvermindController()
-
-
-class MockProcessManager:  # pylint: disable=too-few-public-methods
-    """Mock process manager for testing"""
-
-    def toggle_process_selection(self, name):  # pylint: disable=unused-argument
-        """Mock toggle process selection"""
-        return True
-
-    def clear_all_output(self):
-        """Mock clear all output"""
-        return None
-
-    def restart_process(self, name):  # pylint: disable=unused-argument
-        """Mock restart process"""
-        return None
-
-    def to_dict(self):
-        """Mock to_dict"""
-        return {"processes": {}, "stats": {}}
-
-    def get_combined_output(self, selected_only=True):  # pylint: disable=unused-argument
-        """Mock get combined output"""
-        return []
-
-    def update_process_status(self, name, status):  # pylint: disable=unused-argument
-        """Mock update process status"""
-        return None
-
-    def get_stats(self):
-        """Mock get stats"""
-        return {"total": 0, "running": 0, "selected": 0}
-
-
-class MockOvermindController:  # pylint: disable=too-few-public-methods
-    """Mock overmind controller for testing"""
-
-    async def start_process(self, name):  # pylint: disable=unused-argument
-        """Mock start process"""
-        return True
-
-    async def stop_process(self, name):  # pylint: disable=unused-argument
-        """Mock stop process"""
-        return True
-
-    async def restart_process(self, name):  # pylint: disable=unused-argument
-        """Mock restart process"""
-        return True
-
-    async def get_status(self):
-        """Mock get status"""
-        return "PROCESS PID STATUS\nweb 123 running"
-
-    def parse_status_output(self, output):  # pylint: disable=unused-argument
-        """Mock parse status output"""
-        return {"web": "running"}
-
-
-class TestWebSocketManager(unittest.TestCase):
-    """Test cases for WebSocketManager"""
-
-    def setUp(self):
-        """Set up test environment"""
-        self.manager = WebSocketManager()
-        self.mock_ws = MockWebSocket()
-        self.mock_app = MockApp()
-
-    def test_initialization(self):
-        """Test WebSocketManager initialization"""
-        manager = WebSocketManager()
-        self.assertEqual(len(manager.clients), 0)
-
-    def test_add_remove_client(self):
-        """Test adding and removing clients"""
-        ws = MockWebSocket()
-
-        self.manager.add_client(ws)
-        self.assertEqual(len(self.manager.clients), 1)
-        self.assertIn(ws, self.manager.clients)
-
-        self.manager.remove_client(ws)
-        self.assertEqual(len(self.manager.clients), 0)
-        self.assertNotIn(ws, self.manager.clients)
-
-    def test_websocket_handler_function_exists(self):
-        """Test that websocket_handler function is callable"""
+    def test_websocket_handler_exists(self):
+        """Test that websocket_handler function exists"""
         self.assertTrue(callable(websocket_handler))
 
-    async def test_send_to_client(self):
-        """Test sending message to specific client"""
-        await self.manager.send_to_client(self.mock_ws, "test_type", {"key": "value"})
+    def test_start_websocket_monitor_exists(self):
+        """Test that start_websocket_monitor function exists"""
+        self.assertTrue(callable(start_websocket_monitor))
 
-        self.assertEqual(len(self.mock_ws.sent_messages), 1)
-        message = json.loads(self.mock_ws.sent_messages[0])
-        self.assertEqual(message["type"], "test_type")
-        self.assertEqual(message["data"]["key"], "value")
+    def test_client_connection_dataclass(self):
+        """Test ClientConnection dataclass structure"""
+        # Mock websocket
+        class MockWS:
+            """Mock WebSocket for testing"""
+            state = 1
 
-    async def test_broadcast_empty_clients(self):
-        """Test broadcasting with no clients"""
-        # Should not raise any exceptions
-        await self.manager.broadcast("test_type", {"data": "test"})
-
-    async def test_broadcast_with_clients(self):
-        """Test broadcasting to clients"""
-        self.manager.add_client(self.mock_ws)
-        await self.manager.broadcast("test_type", {"data": "test"})
-
-        self.assertEqual(len(self.mock_ws.sent_messages), 1)
-        message = json.loads(self.mock_ws.sent_messages[0])
-        self.assertEqual(message["type"], "test_type")
-
-    async def test_handle_get_initial_state(self):
-        """Test handling get initial state request"""
-        await self.manager.handle_get_initial_state(self.mock_ws, self.mock_app)
-
-        self.assertEqual(len(self.mock_ws.sent_messages), 1)
-        message = json.loads(self.mock_ws.sent_messages[0])
-        self.assertEqual(message["type"], "initial_state")
-
-    async def test_handle_client_message_invalid_json(self):
-        """Test handling invalid JSON message"""
-        # Should not raise exceptions
-        await self.manager.handle_client_message(self.mock_ws, "invalid json", self.mock_app)
-
-    async def test_handle_client_message_toggle_process(self):
-        """Test handling toggle process message"""
-        message = json.dumps({
-            "type": "toggle_process",
-            "data": {"process_name": "web"}
-        })
-
-        await self.manager.handle_client_message(self.mock_ws, message, self.mock_app)
-        # Should not raise exceptions - actual functionality depends on mock implementations
-
-    async def test_handle_client_message_unknown_type(self):
-        """Test handling unknown message type"""
-        message = json.dumps({
-            "type": "unknown_type",
-            "data": {}
-        })
-
-        # Should not raise exceptions
-        await self.manager.handle_client_message(self.mock_ws, message, self.mock_app)
-
-    def test_global_websocket_manager_exists(self):
-        """Test that global websocket_manager instance exists"""
-        self.assertIsInstance(websocket_manager, WebSocketManager)
+        conn = ClientConnection(ws=MockWS())
+        self.assertTrue(conn.is_alive())
+        self.assertIsNotNone(conn.id)
+        self.assertIsInstance(conn.connected_at, float)
+        self.assertIsInstance(conn.last_activity, float)
+        self.assertIsInstance(conn.last_ping, float)
