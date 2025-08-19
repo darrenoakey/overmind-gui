@@ -247,30 +247,40 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
             print(f"⏱️  [STEP 1] Waiting 5 seconds for graceful response...")
             self.process.send_signal(signal.SIGQUIT)
 
+            sigquit_success = False
             try:
                 await asyncio.wait_for(self.process.wait(), timeout=5)
-                print("✅ [STEP 1] SUCCESS - Overmind shut down gracefully via SIGQUIT")
-                return
+                print("✅ [STEP 1] SUCCESS - Overmind process exited via SIGQUIT")
+                
+                # Verify the process is actually gone
+                try:
+                    os.kill(overmind_pid, 0)  # Test if process exists
+                    print("⚠️  [STEP 1] WARNING - Overmind PID still exists after wait()")
+                except OSError:
+                    print("✅ [STEP 1] CONFIRMED - Overmind process is fully terminated")
+                    sigquit_success = True
+                
             except asyncio.TimeoutError:
                 print("⚠️  [STEP 1] TIMEOUT - No response to SIGQUIT after 5 seconds")
 
-            # Step 2: Send SIGTERM for forceful shutdown (25 second timeout)  
-            print(f"📤 [STEP 2] Sending SIGTERM to PID {overmind_pid} for forceful shutdown...")
-            print(f"⏱️  [STEP 2] Waiting 25 seconds for termination...")
-            self.process.send_signal(signal.SIGTERM)
+            # Only continue with SIGTERM/SIGKILL if SIGQUIT didn't work
+            if not sigquit_success and self.process.returncode is None:
+                # Step 2: Send SIGTERM for forceful shutdown (25 second timeout)  
+                print(f"📤 [STEP 2] Sending SIGTERM to PID {overmind_pid} for forceful shutdown...")
+                print(f"⏱️  [STEP 2] Waiting 25 seconds for termination...")
+                self.process.send_signal(signal.SIGTERM)
 
-            try:
-                await asyncio.wait_for(self.process.wait(), timeout=25)
-                print("✅ [STEP 2] SUCCESS - Overmind terminated via SIGTERM")
-                return
-            except asyncio.TimeoutError:
-                print("⚠️  [STEP 2] TIMEOUT - No response to SIGTERM after 25 seconds")
+                try:
+                    await asyncio.wait_for(self.process.wait(), timeout=25)
+                    print("✅ [STEP 2] SUCCESS - Overmind terminated via SIGTERM")
+                except asyncio.TimeoutError:
+                    print("⚠️  [STEP 2] TIMEOUT - No response to SIGTERM after 25 seconds")
 
-            # Step 3: Send SIGKILL for immediate termination
-            print(f"📤 [STEP 3] Sending SIGKILL to PID {overmind_pid} for immediate termination...")
-            self.process.kill()
-            await self.process.wait()
-            print("✅ [STEP 3] SUCCESS - Overmind was force-killed via SIGKILL")
+                    # Step 3: Send SIGKILL for immediate termination
+                    print(f"📤 [STEP 3] Sending SIGKILL to PID {overmind_pid} for immediate termination...")
+                    self.process.kill()
+                    await self.process.wait()
+                    print("✅ [STEP 3] SUCCESS - Overmind was force-killed via SIGKILL")
 
         except (OSError, subprocess.SubprocessError, ProcessLookupError) as e:
             print(f"❌ ERROR during overmind shutdown: {e}")
@@ -278,9 +288,10 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
             self.process = None
             print("🏁 Overmind process reference cleared")
 
-        # Step 4: Clean up any remaining child processes
+        # Step 4: ALWAYS clean up any remaining child processes
         print("\n🧹 CHILD PROCESS CLEANUP STARTING")
         print("=" * 40)
+        print("🔍 Checking for orphaned child processes from overmind...")
         await self._cleanup_child_processes(overmind_pid)
 
     async def _cleanup_child_processes(self, overmind_pid: int):
@@ -291,48 +302,62 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
             return
 
         try:
-            print("🔍 Scanning for remaining overmind child processes...")
+            print("🔍 Scanning for remaining overmind-related processes...")
             
-            # Get all processes and find children of overmind
+            # Get all processes and find any overmind-related processes
             child_pids = []
+            overmind_related = []
+            
             for proc in psutil.process_iter(['pid', 'ppid', 'name', 'cmdline']):
                 try:
-                    if proc.info['ppid'] == overmind_pid:
-                        child_pids.append(proc.info['pid'])
-                        print(f"🔸 Found child process: PID {proc.info['pid']} ({proc.info['name']})")
+                    proc_info = proc.info
+                    
+                    # Direct children of overmind
+                    if proc_info['ppid'] == overmind_pid:
+                        child_pids.append(proc_info['pid'])
+                        print(f"🔸 Found direct child: PID {proc_info['pid']} ({proc_info['name']})")
+                    
+                    # Any process that might be overmind-related (spawned processes)
+                    elif proc_info['cmdline'] and any('overmind' in str(arg).lower() for arg in proc_info['cmdline']):
+                        overmind_related.append(proc_info['pid'])
+                        print(f"🔸 Found overmind-related: PID {proc_info['pid']} ({proc_info['name']}) - {' '.join(proc_info['cmdline'][:3])}")
+                        
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
+                    
+            # Combine all potentially problematic processes
+            all_target_pids = child_pids + overmind_related
 
-            # Kill remaining child processes
-            if child_pids:
-                print(f"🔥 Terminating {len(child_pids)} remaining child processes...")
-                for pid in child_pids:
+            # Kill remaining processes
+            if all_target_pids:
+                print(f"🔥 Terminating {len(all_target_pids)} remaining processes...")
+                for pid in all_target_pids:
                     try:
-                        print(f"📤 Sending SIGTERM to child PID {pid}")
+                        print(f"📤 Sending SIGTERM to PID {pid}")
                         os.kill(pid, signal.SIGTERM)
-                        print(f"✅ SIGTERM sent to child PID {pid}")
+                        print(f"✅ SIGTERM sent to PID {pid}")
                     except (OSError, ProcessLookupError) as e:
                         print(f"⚠️  Could not terminate PID {pid}: {e}")
                 
                 # Give processes a moment to cleanup, then force kill if needed
-                print("⏱️  Waiting 2 seconds for children to respond to SIGTERM...")
-                await asyncio.sleep(2)
+                print("⏱️  Waiting 3 seconds for processes to respond to SIGTERM...")
+                await asyncio.sleep(3)
                 
-                print("🔍 Checking for any remaining children after SIGTERM...")
-                for pid in child_pids:
+                print("🔍 Checking for any remaining processes after SIGTERM...")
+                for pid in all_target_pids:
                     try:
                         if HAS_PSUTIL and psutil.pid_exists(pid):
-                            print(f"📤 Force-killing stubborn child PID {pid} with SIGKILL")
+                            print(f"📤 Force-killing stubborn PID {pid} with SIGKILL")
                             os.kill(pid, signal.SIGKILL)
-                            print(f"✅ SIGKILL sent to child PID {pid}")
+                            print(f"✅ SIGKILL sent to PID {pid}")
                         else:
-                            print(f"✅ Child PID {pid} already terminated")
+                            print(f"✅ PID {pid} already terminated")
                     except (OSError, ProcessLookupError):
-                        print(f"✅ Child PID {pid} already gone")
+                        print(f"✅ PID {pid} already gone")
                         
-                print("✅ Child process cleanup completed")
+                print("✅ Process cleanup completed")
             else:
-                print("✅ No child processes found - nothing to clean up")
+                print("✅ No overmind-related processes found - nothing to clean up")
 
         except Exception as e:
             print(f"❌ ERROR during child process cleanup: {e}")
