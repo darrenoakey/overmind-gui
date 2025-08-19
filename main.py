@@ -95,6 +95,58 @@ app.ctx.shutdown_complete = False
 shutdown_event = asyncio.Event()
 
 # -----------------------------------------------------------------------------
+# Shutdown message chain
+# -----------------------------------------------------------------------------
+async def shutdown_message_chain(app_instance):
+    """Handle the proper shutdown message flow"""
+    try:
+        print("🔗 SHUTDOWN MESSAGE CHAIN STARTED")
+        print("=" * 40)
+
+        # Message 1: UI closed → Stop overmind
+        print("📨 [MESSAGE 1] UI closed → Stopping overmind...")
+        if app_instance.ctx.overmind_controller:
+            print("📦 Stopping overmind controller...")
+            try:
+                await app_instance.ctx.overmind_controller.stop()
+                print("✅ [MESSAGE 1] Overmind controller stopped completely")
+            except Exception as e:
+                print(f"❌ [MESSAGE 1] Error stopping overmind: {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                app_instance.ctx.overmind_controller = None
+        else:
+            print("ℹ️  [MESSAGE 1] No overmind controller to stop")
+
+        print("📨 [MESSAGE 1] ✅ COMPLETE - Overmind shutdown finished")
+
+        # Message 2: Overmind stopped → Stop Sanic
+        print("\n📨 [MESSAGE 2] Overmind stopped → Stopping Sanic server...")
+        try:
+            app_instance.stop()
+            print("✅ [MESSAGE 2] Sanic server shutdown initiated")
+        except Exception as e:
+            print(f"❌ [MESSAGE 2] Error stopping Sanic server: {e}")
+            import traceback
+            traceback.print_exc()
+
+        print("📨 [MESSAGE 2] ✅ COMPLETE - Server shutdown initiated")
+        print("\n🔗 SHUTDOWN MESSAGE CHAIN COMPLETED")
+
+    except Exception as e:
+        print(f"❌ Error in shutdown message chain: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Fallback: try to stop server anyway
+        try:
+            app_instance.stop()
+        except:
+            pass
+
+
+# -----------------------------------------------------------------------------
 # Setup routes
 # -----------------------------------------------------------------------------
 setup_static_routes(app)
@@ -208,11 +260,12 @@ async def overmind_task(app_instance):
                 await asyncio.sleep(1)
 
     except asyncio.CancelledError:
-        print("Overmind task cancelled")
+        print("🛑 [OVERMIND TASK] Task was cancelled - shutdown in progress")
     except RuntimeError as e:
-        print(f"Runtime error in overmind task: {e}")
+        print(f"❌ [OVERMIND TASK] Runtime error: {e}")
+        traceback.print_exc()
     finally:
-        print("Overmind task completed")
+        print("🏁 [OVERMIND TASK] Overmind background task completed")
 
 
 async def ui_launcher_task(app_instance):
@@ -251,18 +304,34 @@ async def ui_launcher_task(app_instance):
 
         if proc.returncode is not None:
             print(f"[UI] UI subprocess exited with code {proc.returncode}")
+            
+            # If the UI subprocess exited normally (code 0), it means user closed the window
+            # Start the shutdown message chain
+            if proc.returncode == 0 and not app_instance.ctx.shutdown_initiated:
+                print("\n" + "="*70)
+                print("🔴 UI SUBPROCESS EXITED - STARTING SHUTDOWN MESSAGE CHAIN")
+                print("="*70)
+                
+                # Step 1: Set flags and start overmind shutdown
+                print("📨 [MESSAGE 1] UI closed → Starting overmind shutdown...")
+                app_instance.ctx.shutdown_initiated = True
+                shutdown_event.set()
+                
+                # Create a background task to handle the shutdown chain
+                asyncio.create_task(shutdown_message_chain(app_instance))
 
     except asyncio.CancelledError:
-        print("[UI] UI launcher task cancelled")
+        print("🛑 [UI LAUNCHER] Task was cancelled - shutdown in progress")
     except (OSError, subprocess.SubprocessError) as e:
-        print(f"[UI] Error in UI launcher task: {e}")
+        print(f"❌ [UI LAUNCHER] Error in UI launcher task: {e}")
         traceback.print_exc()
     finally:
         if proc is not None and proc.returncode is None:
-            print(f"[UI] Terminating UI subprocess (PID {proc.pid})")
+            print(f"🔄 [UI LAUNCHER] Terminating UI subprocess (PID {proc.pid})")
             proc.kill()
             await proc.wait()
-        print("[UI] UI launcher task completed")
+            print(f"✅ [UI LAUNCHER] UI subprocess terminated")
+        print("🏁 [UI LAUNCHER] UI launcher task completed")
 
 
 # -----------------------------------------------------------------------------
@@ -286,19 +355,27 @@ def setup_signal_handlers(app_instance):
 # -----------------------------------------------------------------------------
 def on_window_closing():
     """Called when webview window is closing - trigger graceful shutdown"""
-    print("[UI] Window closing - initiating graceful shutdown...")
+    print("\n" + "="*70)
+    print("🔴 WEBVIEW WINDOW CLOSING - SHUTDOWN SEQUENCE INITIATED")
+    print("="*70)
     
     # Set the shutdown flag to trigger cleanup
     if not app.ctx.shutdown_initiated:
+        print("🚩 Setting shutdown flags and triggering server stop...")
         app.ctx.shutdown_initiated = True
         shutdown_event.set()
         
         # Stop the Sanic server gracefully
         try:
+            print("🛑 Stopping Sanic server...")
             app.stop()
+            print("✅ Sanic server stop initiated")
         except Exception as e:
-            print(f"[UI] Error stopping server: {e}")
+            print(f"❌ Error stopping server: {e}")
+    else:
+        print("⚠️  Shutdown already in progress - ignoring additional close request")
     
+    print("🔄 Window close handler completed - awaiting server cleanup...")
     return True
 
 
@@ -328,56 +405,60 @@ async def setup(app_instance, loop):
 
 @app.before_server_stop
 async def cleanup(app_instance, _loop):
-    """Clean up resources before server stops with enhanced graceful shutdown"""
+    """Clean up remaining resources - overmind should already be stopped by message chain"""
     if app_instance.ctx.shutdown_complete:
+        print("⚠️  Cleanup already completed - skipping duplicate cleanup")
         return
 
-    print("\n" + "="*60)
-    print("🛑 GRACEFUL SHUTDOWN INITIATED")
-    print("="*60)
+    print("\n" + "="*70)
+    print("🧹 FINAL SERVER CLEANUP (Message 3)")
+    print("="*70)
     
-    app_instance.ctx.shutdown_initiated = True
     app_instance.ctx.running = False
-    shutdown_event.set()
 
-    # Step 1: Stop overmind controller with enhanced shutdown
+    # Overmind should already be stopped by the message chain, but check just in case
     if app_instance.ctx.overmind_controller:
-        print("📦 Stopping overmind controller with enhanced cleanup...")
+        print("⚠️  [CLEANUP] Overmind controller still present - stopping as fallback...")
         try:
             await app_instance.ctx.overmind_controller.stop()
-            print("✓ Overmind controller stopped completely")
+            print("✅ [CLEANUP] Fallback overmind stop completed")
         except Exception as e:  # pylint: disable=broad-exception-caught
-            print(f"⚠ Error stopping overmind controller: {e}")
+            print(f"❌ [CLEANUP] Fallback overmind stop failed: {e}")
         finally:
             app_instance.ctx.overmind_controller = None
+    else:
+        print("✅ [CLEANUP] Overmind already stopped by message chain")
 
-    # Step 2: Cancel background tasks
-    print("🧹 Cancelling background tasks...")
-    for i, task in enumerate(app_instance.ctx.tasks):
-        if not task.done():
-            print(f"  Cancelling task {i+1}/{len(app_instance.ctx.tasks)}")
-            task.cancel()
-
-    # Step 3: Wait for tasks to complete
+    # Cancel background tasks
+    print("\n🧹 [CLEANUP] Cancelling background tasks...")
     if app_instance.ctx.tasks:
-        print("⏳ Waiting for background tasks to complete...")
+        for i, task in enumerate(app_instance.ctx.tasks):
+            if not task.done():
+                print(f"🔄 [TASK {i+1}/{len(app_instance.ctx.tasks)}] Cancelling...")
+                task.cancel()
+            else:
+                print(f"✅ [TASK {i+1}/{len(app_instance.ctx.tasks)}] Already completed")
+
+        # Wait briefly for tasks to complete
+        print("⏳ [CLEANUP] Waiting for background tasks...")
         for i, task in enumerate(app_instance.ctx.tasks):
             try:
-                await asyncio.wait_for(task, timeout=10.0)
-                print(f"✓ Task {i+1}/{len(app_instance.ctx.tasks)} completed")
-            except asyncio.TimeoutError:
-                print(f"⚠ Task {i+1} timed out")
-            except asyncio.CancelledError:
-                print(f"✓ Task {i+1} cancelled")
+                await asyncio.wait_for(task, timeout=5.0)
+                print(f"✅ [TASK {i+1}] Completed")
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                print(f"✅ [TASK {i+1}] Cancelled/Timed out")
             except Exception as e:  # pylint: disable=broad-exception-caught
-                print(f"⚠ Task {i+1} error: {e}")
+                print(f"⚠️  [TASK {i+1}] Error: {e}")
+    else:
+        print("✅ [CLEANUP] No background tasks to cancel")
 
     app_instance.ctx.tasks.clear()
     app_instance.ctx.shutdown_complete = True
     
-    print("="*60)
-    print("✅ GRACEFUL SHUTDOWN COMPLETED")
-    print("="*60)
+    print("\n" + "="*70)
+    print("✅ FINAL CLEANUP COMPLETED")
+    print("🏁 APPLICATION SHUTDOWN SEQUENCE FINISHED")
+    print("="*70)
 
 
 # -----------------------------------------------------------------------------
@@ -433,9 +514,20 @@ def launch_ui(port: int, is_subprocess: bool = False):
             on_top=False
         )
 
-        # Set window closing handler only if NOT a subprocess
-        if window and hasattr(window, 'events') and not is_subprocess:
-            window.events.closing += on_window_closing
+        # Set window closing handler for both subprocess and main process
+        if window and hasattr(window, 'events'):
+            if is_subprocess:
+                # For subprocess: simplified handler that just returns True
+                def on_subprocess_window_closing():
+                    print("\n" + "="*70)
+                    print("🔴 WEBVIEW SUBPROCESS WINDOW CLOSING")
+                    print("="*70)
+                    print("🔄 Subprocess will exit and trigger main process shutdown")
+                    return True
+                window.events.closing += on_subprocess_window_closing
+            else:
+                # For main process: full shutdown handler
+                window.events.closing += on_window_closing
 
         print(f"[UI] Starting webview window for http://localhost:{port}")
         webview.start()
