@@ -10,6 +10,14 @@ import unittest
 import signal
 from typing import Optional, Callable, Dict, Any
 
+# Try to import psutil for enhanced process management
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+    print("Warning: psutil not available - child process cleanup will be limited")
+
 
 class OvermindController:  # pylint: disable=too-many-instance-attributes
     """Controls overmind process and handles communication"""
@@ -122,7 +130,7 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
             return False
 
     async def stop(self):
-        """Stop overmind and all monitoring tasks"""
+        """Stop overmind and all monitoring tasks with enhanced cleanup"""
         if not self.running:
             return
 
@@ -144,37 +152,98 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
             except asyncio.CancelledError:
                 pass
 
-        # Now stop overmind itself
+        # Now stop overmind itself with enhanced shutdown
         if self.process and self.process.returncode is None:
+            await self._graceful_shutdown_overmind()
+
+        # Final cleanup
+        await self._cleanup_resources()
+
+    async def _graceful_shutdown_overmind(self):
+        """Perform graceful shutdown of overmind with enhanced cleanup"""
+        overmind_pid = self.process.pid
+        print(f"Gracefully shutting down overmind (PID: {overmind_pid})")
+
+        try:
+            # Step 1: Send SIGQUIT for graceful shutdown (30 second timeout)
+            print("Sending SIGQUIT to overmind for graceful shutdown...")
+            self.process.send_signal(signal.SIGQUIT)
+
             try:
-                print(f"Sending SIGTERM to overmind process (PID: {self.process.pid})")
+                await asyncio.wait_for(self.process.wait(), timeout=30)
+                print("✓ Overmind shut down gracefully via SIGQUIT")
+            except asyncio.TimeoutError:
+                print("⚠ Overmind didn't respond to SIGQUIT within 30 seconds, sending SIGKILL")
+                self.process.kill()
+                await self.process.wait()
+                print("✓ Overmind was force-killed")
 
-                # Send SIGTERM to overmind
-                self.process.send_signal(signal.SIGTERM)
+        except (OSError, subprocess.SubprocessError, ProcessLookupError) as e:
+            print(f"Error during overmind shutdown: {e}")
+        finally:
+            self.process = None
 
-                # Wait up to 30 seconds for graceful shutdown (increased from 15)
+        # Step 2: Clean up any remaining child processes
+        await self._cleanup_child_processes(overmind_pid)
+
+    async def _cleanup_child_processes(self, overmind_pid: int):
+        """Find and cleanup any remaining child processes of overmind"""
+        if not HAS_PSUTIL:
+            print("⚠ psutil not available - skipping child process cleanup")
+            print("  Install psutil with: pip install psutil")
+            return
+
+        try:
+            print("Checking for remaining overmind child processes...")
+            
+            # Get all processes and find children of overmind
+            child_pids = []
+            for proc in psutil.process_iter(['pid', 'ppid', 'name', 'cmdline']):
                 try:
-                    await asyncio.wait_for(self.process.wait(), timeout=30)
-                    print("Overmind shut down gracefully")
-                except asyncio.TimeoutError:
-                    print("Overmind didn't shut down gracefully within 30 seconds, sending SIGKILL")
-                    self.process.kill()
-                    await self.process.wait()
-                    print("Overmind was force-killed")
+                    if proc.info['ppid'] == overmind_pid:
+                        child_pids.append(proc.info['pid'])
+                        print(f"Found child process: PID {proc.info['pid']} ({proc.info['name']})")
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
 
-            except (OSError, subprocess.SubprocessError, ProcessLookupError) as e:
-                print(f"Error stopping overmind: {e}")
-            finally:
-                self.process = None
+            # Kill remaining child processes
+            if child_pids:
+                print(f"Terminating {len(child_pids)} remaining child processes...")
+                for pid in child_pids:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                        print(f"✓ Sent SIGTERM to child PID {pid}")
+                    except (OSError, ProcessLookupError) as e:
+                        print(f"⚠ Could not terminate PID {pid}: {e}")
+                
+                # Give processes a moment to cleanup, then force kill if needed
+                await asyncio.sleep(2)
+                
+                for pid in child_pids:
+                    try:
+                        if HAS_PSUTIL and psutil.pid_exists(pid):
+                            os.kill(pid, signal.SIGKILL)
+                            print(f"✓ Force-killed remaining PID {pid}")
+                    except (OSError, ProcessLookupError):
+                        pass  # Already gone
+            else:
+                print("✓ No child processes found")
 
-        # Clean up socket file if it exists
+        except Exception as e:
+            print(f"Error during child process cleanup: {e}")
+
+    async def _cleanup_resources(self):
+        """Clean up overmind socket file and other resources"""
+        # Clean up socket file
         socket_file = os.path.join(self.working_directory, ".overmind.sock")
         if os.path.exists(socket_file):
             try:
                 os.unlink(socket_file)
-                print("Cleaned up socket file")
+                print("✓ Cleaned up .overmind.sock file")
             except OSError as e:
-                print(f"Could not clean up socket file: {e}")
+                print(f"⚠ Could not clean up socket file: {e}")
+        else:
+            print("✓ No socket file to clean up")
 
     async def start_process(self, process_name: str) -> bool:
         """Start a specific process"""

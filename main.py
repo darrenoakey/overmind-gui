@@ -285,8 +285,20 @@ def setup_signal_handlers(app_instance):
 # Window close handler for webview
 # -----------------------------------------------------------------------------
 def on_window_closing():
-    """Called when webview window is closing"""
-    print("[UI] Window closing")
+    """Called when webview window is closing - trigger graceful shutdown"""
+    print("[UI] Window closing - initiating graceful shutdown...")
+    
+    # Set the shutdown flag to trigger cleanup
+    if not app.ctx.shutdown_initiated:
+        app.ctx.shutdown_initiated = True
+        shutdown_event.set()
+        
+        # Stop the Sanic server gracefully
+        try:
+            app.stop()
+        except Exception as e:
+            print(f"[UI] Error stopping server: {e}")
+    
     return True
 
 
@@ -316,36 +328,39 @@ async def setup(app_instance, loop):
 
 @app.before_server_stop
 async def cleanup(app_instance, _loop):
-    """Clean up resources before server stops"""
+    """Clean up resources before server stops with enhanced graceful shutdown"""
     if app_instance.ctx.shutdown_complete:
         return
 
-    print("Starting cleanup - waiting for ALL processes to stop...")
+    print("\n" + "="*60)
+    print("🛑 GRACEFUL SHUTDOWN INITIATED")
+    print("="*60)
+    
     app_instance.ctx.shutdown_initiated = True
     app_instance.ctx.running = False
     shutdown_event.set()
 
-    # Stop overmind controller
+    # Step 1: Stop overmind controller with enhanced shutdown
     if app_instance.ctx.overmind_controller:
-        print("Stopping overmind controller...")
+        print("📦 Stopping overmind controller with enhanced cleanup...")
         try:
             await app_instance.ctx.overmind_controller.stop()
             print("✓ Overmind controller stopped completely")
         except Exception as e:  # pylint: disable=broad-exception-caught
-            print(f"Error stopping overmind controller: {e}")
+            print(f"⚠ Error stopping overmind controller: {e}")
         finally:
             app_instance.ctx.overmind_controller = None
 
-    # Cancel background tasks
-    print("Cancelling background tasks...")
+    # Step 2: Cancel background tasks
+    print("🧹 Cancelling background tasks...")
     for i, task in enumerate(app_instance.ctx.tasks):
         if not task.done():
-            print(f"Cancelling task {i+1}/{len(app_instance.ctx.tasks)}")
+            print(f"  Cancelling task {i+1}/{len(app_instance.ctx.tasks)}")
             task.cancel()
 
-    # Wait for tasks to complete
+    # Step 3: Wait for tasks to complete
     if app_instance.ctx.tasks:
-        print("Waiting for background tasks to complete...")
+        print("⏳ Waiting for background tasks to complete...")
         for i, task in enumerate(app_instance.ctx.tasks):
             try:
                 await asyncio.wait_for(task, timeout=10.0)
@@ -359,7 +374,10 @@ async def cleanup(app_instance, _loop):
 
     app_instance.ctx.tasks.clear()
     app_instance.ctx.shutdown_complete = True
-    print("✓ Cleanup completed - all processes stopped")
+    
+    print("="*60)
+    print("✅ GRACEFUL SHUTDOWN COMPLETED")
+    print("="*60)
 
 
 # -----------------------------------------------------------------------------

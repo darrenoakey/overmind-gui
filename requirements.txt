@@ -1,0 +1,4 @@
+# Dependencies for Overmind GUI Web
+sanic
+pywebview
+psutil
