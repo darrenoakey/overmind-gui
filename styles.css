@@ -478,8 +478,8 @@ body {
 .output-line {
     white-space: pre-wrap;
     word-break: break-word;
-    margin-bottom: 1px;
-    padding: 2px var(--spacing-sm);
+    margin-bottom: 0;
+    padding: 1px var(--spacing-sm);
     border-radius: 2px;
     transition: var(--transition-fast);
     user-select: text;
@@ -999,7 +999,7 @@ body {
     font-size: var(--font-sm);
     line-height: 1.4;
     color: var(--text-primary);
-    padding: 2px 0;
+    padding: 1px 0;
     white-space: pre-wrap;
     word-wrap: break-word;
 }

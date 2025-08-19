@@ -21,6 +21,7 @@ class UIManager {
         this.autoScroll = true;
         this.isSearchActive = false;
         this.isFilterActive = false;
+        this.programmaticScroll = false; // Flag to prevent mouse wheel from triggering during our scroll
         
         // Debounce timers
         this.searchDebounceTimer = null;
@@ -129,6 +130,16 @@ class UIManager {
         
         // Auto-scroll button (floating)
         this.elements.autoScrollBtn.addEventListener('click', () => this.enableAutoScroll());
+        
+        // Mouse wheel detection - disable autoscroll on user wheel scroll
+        this.elements.outputLines.addEventListener('wheel', (e) => {
+            // Only disable autoscroll if this is a real user wheel event, not our programmatic scroll
+            if (this.autoScroll && !this.programmaticScroll) {
+                this.autoScroll = false;
+                this.updateAutoScrollButton();
+                console.log('Auto-scroll disabled by mouse wheel');
+            }
+        });
         
         // Detect scrollbar interaction - only way to disable autoscroll via scrolling
         this.elements.outputLines.addEventListener('mousedown', (e) => {
@@ -766,7 +777,13 @@ class UIManager {
      * Scroll to bottom of output
      */
     scrollToBottom() {
+        // Set flag to prevent wheel event from firing during our programmatic scroll
+        this.programmaticScroll = true;
         this.elements.outputLines.scrollTop = this.elements.outputLines.scrollHeight;
+        // Clear flag after scroll completes
+        setTimeout(() => {
+            this.programmaticScroll = false;
+        }, 10);
     }
     
     /**

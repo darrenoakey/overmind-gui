@@ -1,5 +1,80 @@
 // Utility functions for ANSI color handling
 
+// Background color for contrast calculations (dark theme)
+const BACKGROUND_COLOR = '#0f172a'; // --bg-primary from CSS
+
+// Color mapping cache for contrast enhancement
+const colorContrastMap = new Map();
+
+// Calculate color contrast ratio between two colors
+const getContrastRatio = (color1, color2) => {
+    const getLuminance = (color) => {
+        const hex = color.replace('#', '');
+        const r = parseInt(hex.substr(0, 2), 16) / 255;
+        const g = parseInt(hex.substr(2, 2), 16) / 255;
+        const b = parseInt(hex.substr(4, 2), 16) / 255;
+        
+        const toLinear = (c) => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        
+        return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+    };
+    
+    const lum1 = getLuminance(color1);
+    const lum2 = getLuminance(color2);
+    const brightest = Math.max(lum1, lum2);
+    const darkest = Math.min(lum1, lum2);
+    
+    return (brightest + 0.05) / (darkest + 0.05);
+};
+
+// Enhance color contrast if needed
+const enhanceColorContrast = (originalColor) => {
+    // Check cache first
+    if (colorContrastMap.has(originalColor)) {
+        return colorContrastMap.get(originalColor);
+    }
+    
+    const contrastRatio = getContrastRatio(originalColor, BACKGROUND_COLOR);
+    
+    // If contrast is sufficient (4.5:1 for normal text), use original color
+    if (contrastRatio >= 4.5) {
+        colorContrastMap.set(originalColor, originalColor);
+        return originalColor;
+    }
+    
+    // Enhance the color by making it brighter/lighter
+    const hex = originalColor.replace('#', '');
+    let r = parseInt(hex.substr(0, 2), 16);
+    let g = parseInt(hex.substr(2, 2), 16);
+    let b = parseInt(hex.substr(4, 2), 16);
+    
+    // Increase brightness while preserving hue
+    const factor = 1.8; // Increase brightness
+    r = Math.min(255, Math.floor(r * factor));
+    g = Math.min(255, Math.floor(g * factor));
+    b = Math.min(255, Math.floor(b * factor));
+    
+    const enhancedColor = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+    
+    // Double-check the enhanced color has good contrast
+    const newContrastRatio = getContrastRatio(enhancedColor, BACKGROUND_COLOR);
+    
+    let finalColor = enhancedColor;
+    
+    // If still not enough contrast, make it even brighter
+    if (newContrastRatio < 4.5) {
+        r = Math.min(255, Math.floor(r * 1.5));
+        g = Math.min(255, Math.floor(g * 1.5));
+        b = Math.min(255, Math.floor(b * 1.5));
+        finalColor = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+    }
+    
+    // Cache the result
+    colorContrastMap.set(originalColor, finalColor);
+    
+    return finalColor;
+};
+
 // 256-color palette (standard terminal colors)
 const ansi256Colors = [
     // 0-15: Standard colors
@@ -93,8 +168,9 @@ const ansiToHtml = (text) => {
             if (codeNum === 38 && i + 2 < codeList.length && codeList[i + 1] === '5') {
                 const colorIndex = parseInt(codeList[i + 2], 10);
                 if (colorIndex >= 0 && colorIndex < ansi256Colors.length) {
-                    const color = ansi256Colors[colorIndex];
-                    styles.push(`color: ${color}`);
+                    const originalColor = ansi256Colors[colorIndex];
+                    const enhancedColor = enhanceColorContrast(originalColor);
+                    styles.push(`color: ${enhancedColor}`);
                     i += 2; // Skip the next two codes (5 and colorIndex)
                     continue;
                 }
@@ -113,7 +189,9 @@ const ansiToHtml = (text) => {
             
             // Handle basic 8/16 colors
             if (ansiColors[code]) {
-                styles.push(`color: ${ansiColors[code]}`);
+                const originalColor = ansiColors[code];
+                const enhancedColor = enhanceColorContrast(originalColor);
+                styles.push(`color: ${enhancedColor}`);
             } else if (ansiBgColors[code]) {
                 styles.push(`background-color: ${ansiBgColors[code]}`);
             } else if (codeNum === 1) {
@@ -168,9 +246,32 @@ const stripAnsiCodes = (text) => {
     return text.replace(/[\x1b\u001b]\[[0-9;]*m/g, '');
 };
 
+// Get color mapping stats for debugging
+const getColorMappingStats = () => {
+    const stats = {
+        totalMappings: colorContrastMap.size,
+        enhancedColors: 0,
+        originalColors: 0,
+        mappings: {}
+    };
+    
+    for (const [original, enhanced] of colorContrastMap.entries()) {
+        stats.mappings[original] = enhanced;
+        if (original === enhanced) {
+            stats.originalColors++;
+        } else {
+            stats.enhancedColors++;
+        }
+    }
+    
+    return stats;
+};
+
 // Export for use in other files
 window.AnsiUtils = {
     ansiToHtml,
     highlightSearchInHtml,
-    stripAnsiCodes
+    stripAnsiCodes,
+    getColorMappingStats,
+    enhanceColorContrast // For debugging
 };
