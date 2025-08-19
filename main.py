@@ -90,6 +90,7 @@ app.ctx.overmind_error = ""
 app.ctx.tasks = []
 app.ctx.shutdown_initiated = False
 app.ctx.shutdown_complete = False
+app.ctx.overmind_args = []  # Will be populated by main()
 
 # Global shutdown event for coordination
 shutdown_event = asyncio.Event()
@@ -206,10 +207,12 @@ async def overmind_task(app_instance):
         process_names = app_instance.ctx.process_manager.load_procfile("Procfile")
         print(f"DEBUG: Loaded {len(process_names)} processes from Procfile: {process_names}")
         
-        # Initialize overmind controller with callbacks
+        # Initialize overmind controller with callbacks and passthrough args
+        overmind_args = getattr(app_instance.ctx, 'overmind_args', [])
         app_instance.ctx.overmind_controller = OvermindController(
             output_callback=lambda line: handle_output_line(line, app_instance),
-            status_callback=lambda updates: handle_status_update(updates, app_instance)
+            status_callback=lambda updates: handle_status_update(updates, app_instance),
+            overmind_args=overmind_args
         )
 
         # Start overmind
@@ -550,7 +553,14 @@ def main():
     parser.add_argument("--ui", action="store_true", help="UI-only mode")
     parser.add_argument("--no-ui", action="store_true", help="Run server without UI")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port")
-    args = parser.parse_args()
+    
+    # Parse known args and collect unknown args to pass to overmind
+    args, unknown_args = parser.parse_known_args()
+    
+    # Store overmind arguments for passthrough
+    app.ctx.overmind_args = unknown_args
+    if unknown_args:
+        print(f"Passing additional arguments to overmind: {' '.join(unknown_args)}")
 
     app.config.UI_PORT = args.port
 

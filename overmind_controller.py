@@ -94,6 +94,10 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
             # Build overmind start command with additional arguments
             # Add --no-port to prevent port conflicts and force color output
             cmd = ["overmind", "start", "--any-can-die", "--no-port"] + self.overmind_args
+            
+            if self.overmind_args:
+                print(f"Using additional overmind arguments: {' '.join(self.overmind_args)}")
+            print(f"Full overmind command: {' '.join(cmd)}")
 
             # Get environment with color forcing
             env = self.get_colored_env()
