@@ -176,13 +176,13 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
                 # Send signals directly without async
                 import time
                 
-                print("📤 Emergency SIGQUIT...")
-                self.process.send_signal(signal.SIGQUIT)
+                print("📤 Emergency SIGINT...")
+                self.process.send_signal(signal.SIGINT)
                 
                 # Wait briefly
-                for i in range(5):
+                for i in range(10):
                     if self.process.returncode is not None:
-                        print("✅ Emergency SIGQUIT successful")
+                        print("✅ Emergency SIGINT successful")
                         break
                     time.sleep(1)
                 else:
@@ -242,15 +242,15 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
         print("=" * 50)
 
         try:
-            # Step 1: Send SIGQUIT for graceful shutdown (5 second timeout)
-            print(f"📤 [STEP 1] Sending SIGQUIT to PID {overmind_pid} for graceful shutdown...")
-            print(f"⏱️  [STEP 1] Waiting 5 seconds for graceful response...")
-            self.process.send_signal(signal.SIGQUIT)
+            # Step 1: Send SIGINT for graceful shutdown (10 second timeout)
+            print(f"📤 [STEP 1] Sending SIGINT to PID {overmind_pid} for graceful shutdown...")
+            print(f"⏱️  [STEP 1] Waiting 10 seconds for graceful response...")
+            self.process.send_signal(signal.SIGINT)
 
-            sigquit_success = False
+            sigint_success = False
             try:
-                await asyncio.wait_for(self.process.wait(), timeout=5)
-                print("✅ [STEP 1] SUCCESS - Overmind process exited via SIGQUIT")
+                await asyncio.wait_for(self.process.wait(), timeout=10)
+                print("✅ [STEP 1] SUCCESS - Overmind process exited via SIGINT")
                 
                 # Verify the process is actually gone
                 try:
@@ -258,13 +258,13 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
                     print("⚠️  [STEP 1] WARNING - Overmind PID still exists after wait()")
                 except OSError:
                     print("✅ [STEP 1] CONFIRMED - Overmind process is fully terminated")
-                    sigquit_success = True
+                    sigint_success = True
                 
             except asyncio.TimeoutError:
-                print("⚠️  [STEP 1] TIMEOUT - No response to SIGQUIT after 5 seconds")
+                print("⚠️  [STEP 1] TIMEOUT - No response to SIGINT after 10 seconds")
 
-            # Only continue with SIGTERM/SIGKILL if SIGQUIT didn't work
-            if not sigquit_success and self.process.returncode is None:
+            # Only continue with SIGTERM/SIGKILL if SIGINT didn't work
+            if not sigint_success and self.process.returncode is None:
                 # Step 2: Send SIGTERM for forceful shutdown (25 second timeout)  
                 print(f"📤 [STEP 2] Sending SIGTERM to PID {overmind_pid} for forceful shutdown...")
                 print(f"⏱️  [STEP 2] Waiting 25 seconds for termination...")
