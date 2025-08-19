@@ -31,16 +31,12 @@ class PollingManager {
             return;
         }
         
-        console.log('Starting polling at', this.pollFrequency, 'ms intervals');
+        console.log('Starting polling with timeout-based scheduling');
         this.isPolling = true;
         this.retryCount = 0;
         
-        // Start with immediate poll, then continue with interval
+        // Start with immediate poll
         this.poll();
-        
-        this.pollInterval = setInterval(() => {
-            this.poll();
-        }, this.pollFrequency);
     }
     
     /**
@@ -51,7 +47,7 @@ class PollingManager {
         this.isPolling = false;
         
         if (this.pollInterval) {
-            clearInterval(this.pollInterval);
+            clearTimeout(this.pollInterval);
             this.pollInterval = null;
         }
         
@@ -65,6 +61,8 @@ class PollingManager {
         if (!this.isPolling) {
             return;
         }
+        
+        const startTime = performance.now();
         
         try {
             const url = this.lastTimestamp 
@@ -85,49 +83,150 @@ class PollingManager {
             // Update stats
             this.stats = data.stats || {};
             
-            // Process updates
+            // Process updates with batching
             if (data.updates && data.updates.length > 0) {
-                this.processUpdates(data.updates);
+                await this.processUpdatesBatched(data.updates);
             }
             
             // Mark as connected and reset retry count
             this.setConnectionStatus(true);
             this.retryCount = 0;
             
+            // Schedule next poll AFTER processing is complete
+            this.scheduleNextPoll(startTime);
+            
         } catch (error) {
             console.error('Polling error:', error);
             this.handleError(error);
+            return; // Don't schedule next poll on error - handleError will handle retry
         }
     }
     
     /**
-     * Process updates from server
+     * Schedule next poll after processing is complete
      */
-    processUpdates(updates) {
+    scheduleNextPoll(startTime) {
+        if (!this.isPolling) {
+            return;
+        }
+        
+        const processingTime = performance.now() - startTime;
+        const delay = Math.max(0, this.pollFrequency + processingTime);
+        
+        // Use setTimeout to schedule next poll
+        this.pollInterval = setTimeout(() => {
+            this.poll();
+        }, delay);
+    }
+    
+    /**
+     * Process updates from server with batching
+     */
+    async processUpdatesBatched(updates) {
+        // Separate updates by type for batched processing
+        const outputUpdates = [];
+        const statusUpdates = [];
+        const otherUpdates = [];
+        
         for (const update of updates) {
             switch (update.type) {
                 case 'output':
-                    this.handleOutputUpdate(update);
+                    outputUpdates.push(update);
                     break;
                 case 'status':
-                    this.handleStatusUpdate(update);
-                    break;
                 case 'status_bulk':
-                    this.handleBulkStatusUpdate(update);
+                    statusUpdates.push(update);
                     break;
                 default:
                     console.warn('Unknown update type:', update.type);
+                    otherUpdates.push(update);
             }
         }
         
-        // Notify about updates
-        if (this.onUpdate) {
+        // Process output updates in batches (most critical for performance)
+        if (outputUpdates.length > 0) {
+            await this.handleBatchedOutputUpdates(outputUpdates);
+        }
+        
+        // Process status updates
+        if (statusUpdates.length > 0) {
+            this.handleBatchedStatusUpdates(statusUpdates);
+        }
+        
+        // Process other updates individually
+        for (const update of otherUpdates) {
+            this.handleGenericUpdate(update);
+        }
+        
+        // Notify about updates (after all processing)
+        if (this.onUpdate && updates.length > 0) {
             this.onUpdate(updates);
         }
     }
     
     /**
-     * Handle output line update
+     * Legacy method for compatibility
+     */
+    processUpdates(updates) {
+        // Use the batched version
+        return this.processUpdatesBatched(updates);
+    }
+    
+    /**
+     * Handle batched output updates (critical for performance)
+     */
+    async handleBatchedOutputUpdates(outputUpdates) {
+        if (outputUpdates.length === 0) return;
+        
+        // Yield control to allow DOM updates if we have many lines
+        if (outputUpdates.length > 50) {
+            console.log(`Processing ${outputUpdates.length} output lines in batches`);
+            
+            // Process in chunks of 25 to prevent UI blocking
+            const CHUNK_SIZE = 25;
+            for (let i = 0; i < outputUpdates.length; i += CHUNK_SIZE) {
+                const chunk = outputUpdates.slice(i, i + CHUNK_SIZE);
+                
+                // Process chunk
+                if (this.onUpdate) {
+                    this.onUpdate(chunk);
+                }
+                
+                // Yield control every chunk to prevent UI blocking
+                if (i + CHUNK_SIZE < outputUpdates.length) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+            }
+        } else {
+            // Process all at once for smaller batches
+            if (this.onUpdate) {
+                this.onUpdate(outputUpdates);
+            }
+        }
+    }
+    
+    /**
+     * Handle batched status updates
+     */
+    handleBatchedStatusUpdates(statusUpdates) {
+        for (const update of statusUpdates) {
+            if (update.type === 'status') {
+                this.handleStatusUpdate(update);
+            } else if (update.type === 'status_bulk') {
+                this.handleBulkStatusUpdate(update);
+            }
+        }
+    }
+    
+    /**
+     * Handle generic update
+     */
+    handleGenericUpdate(update) {
+        console.warn('Unhandled update type:', update.type);
+    }
+    
+    /**
+     * Handle output line update (legacy - single update)
      */
     handleOutputUpdate(update) {
         const line = update.data;
@@ -187,7 +286,7 @@ class PollingManager {
         if (this.isPolling && this.retryCount <= this.maxRetries) {
             console.log(`Retrying in ${this.errorRetryDelay}ms (attempt ${this.retryCount}/${this.maxRetries})`);
             
-            setTimeout(() => {
+            this.pollInterval = setTimeout(() => {
                 if (this.isPolling) {
                     this.poll();
                 }

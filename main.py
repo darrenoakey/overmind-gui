@@ -46,7 +46,10 @@ warnings.filterwarnings(
 # -----------------------------------------------------------------------------
 def get_and_increment_version():
     """Read current version, increment it, and return the new version"""
-    version_file = "version.txt"
+    # Get version file relative to script location, not current directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    version_file = os.path.join(script_dir, "version.txt")
+    
     try:
         if os.path.exists(version_file):
             with open(version_file, 'r') as f:
