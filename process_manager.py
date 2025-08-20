@@ -19,7 +19,7 @@ class ProcessInfo:
         self.name = name
         self.status: str = "unknown"        # running, stopped, disabled, dead, broken
         self.selected: bool = True          # whether output should be shown
-        self.output_lines: deque = deque(maxlen=10000)  # circular buffer for output
+        self.output_lines: deque = deque(maxlen=5000)  # circular buffer for output
         self.user_disabled: bool = False    # user explicitly stopped this process
         self.last_restart_time: float = time.time()  # when process was last restarted
         self.broken: bool = False          # whether process has warning patterns

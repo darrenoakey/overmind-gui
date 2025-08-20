@@ -3,7 +3,11 @@
     "allow": [
       "Bash(python:*)",
       "Bash(grep:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(node:*)",
+      "WebFetch(domain:unpkg.com)",
+      "WebFetch(domain:app.unpkg.com)",
+      "WebFetch(domain:cdn.jsdelivr.net)"
     ],
     "deny": [],
     "ask": []

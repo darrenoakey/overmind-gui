@@ -75,16 +75,20 @@ async def poll_updates(request: Request) -> HTTPResponse:
             except (ValueError, TypeError):
                 return response.json({"error": "Invalid since timestamp"}, status=400)
         
-        # Poll for updates
-        updates, current_timestamp = update_queue.poll_updates(since_timestamp)
+        # Poll for updates - NEW OPTIMIZED FORMAT
+        response_package, current_timestamp = update_queue.poll_updates(since_timestamp)
         
         # Add current stats
         stats = {}
         if hasattr(request.app.ctx, 'process_manager'):
             stats = request.app.ctx.process_manager.get_stats()
         
+        # Build final response with new optimized structure
         return response.json({
-            "updates": updates,
+            "output_lines": response_package['output_lines'],
+            "status_updates": response_package['status_updates'],
+            "total_lines": response_package['total_lines'],
+            "other_updates": response_package['other_updates'],
             "timestamp": current_timestamp,
             "stats": stats
         })

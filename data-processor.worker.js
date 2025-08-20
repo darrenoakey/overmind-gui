@@ -118,12 +118,37 @@ class WorkerANSIProcessor {
                     }
                 }
                 
-                // 256-color background: 48;5;N
+                // 24-bit RGB foreground: 38;2;r;g;b
+                if (codeNum === 38 && i + 4 < codeList.length && codeList[i + 1] === '2') {
+                    const r = parseInt(codeList[i + 2], 10);
+                    const g = parseInt(codeList[i + 3], 10);
+                    const b = parseInt(codeList[i + 4], 10);
+                    if (r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255) {
+                        const color = this.enhanceColorContrast(`#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`);
+                        styles.push(`color: ${color}`);
+                        i += 5;
+                        continue;
+                    }
+                }
+                
+                // 256-color background: 48;5;N - parse but don't apply
                 if (codeNum === 48 && i + 2 < codeList.length && codeList[i + 1] === '5') {
                     const colorIndex = parseInt(codeList[i + 2], 10);
                     if (colorIndex >= 0 && colorIndex < this.ansi256Colors.length) {
-                        styles.push(`background-color: ${this.ansi256Colors[colorIndex]}`);
+                        // Background colors are parsed but not applied for readability
                         i += 3;
+                        continue;
+                    }
+                }
+                
+                // 24-bit RGB background: 48;2;r;g;b - parse but don't apply
+                if (codeNum === 48 && i + 4 < codeList.length && codeList[i + 1] === '2') {
+                    const r = parseInt(codeList[i + 2], 10);
+                    const g = parseInt(codeList[i + 3], 10);
+                    const b = parseInt(codeList[i + 4], 10);
+                    if (r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255) {
+                        // Background colors are parsed but not applied for readability
+                        i += 5;
                         continue;
                     }
                 }
@@ -133,7 +158,8 @@ class WorkerANSIProcessor {
                     const color = this.enhanceColorContrast(this.ansiColors[code]);
                     styles.push(`color: ${color}`);
                 } else if (this.ansiBgColors[code]) {
-                    styles.push(`background-color: ${this.ansiBgColors[code]}`);
+                    // Background colors are parsed but not applied for readability
+                    // Just consume the code without adding any styles
                 } else if (codeNum === 1) {
                     styles.push('font-weight: bold');
                 } else if (codeNum === 3) {

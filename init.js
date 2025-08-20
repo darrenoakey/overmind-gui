@@ -80,9 +80,9 @@ async function initializeApp() {
         pollingManager = new window.PollingManager();
         window.pollingManager = pollingManager; // Make available globally for UI
         
-        // Set up polling manager event handlers
-        pollingManager.onUpdate = (updates) => {
-            handleUpdates(updates);
+        // Set up polling manager event handlers - NEW PROTOCOL
+        pollingManager.onPollingResponse = (data) => {
+            handlePollingResponse(data);
         };
         
         pollingManager.onError = (error) => {
@@ -126,53 +126,49 @@ async function initializeApp() {
 }
 
 /**
- * Handle updates from polling
+ * Handle updates from polling - NEW OPTIMIZED PROTOCOL with pre-rendered HTML
  */
-function handleUpdates(updates) {
+function handlePollingResponse(data) {
     if (!uiManager) return;
     
-    const outputLines = [];
+    // NEW OPTIMIZED FORMAT:
+    // data = {
+    //   output_lines: [{id, html, clean_text, process, timestamp}, ...],
+    //   status_updates: {process: status, ...},
+    //   total_lines: int,
+    //   other_updates: [...],
+    //   timestamp: float,
+    //   stats: {...}
+    // }
     
-    updates.forEach(update => {
-        switch (update.type) {
-            case 'output':
-                if (update.data && update.data.line) {
-                    outputLines.push(update.data.line);
-                } else if (update.data) {
-                    // Handle direct line data
-                    outputLines.push(update.data);
-                }
-                break;
-                
-            case 'status':
-                if (update.data && update.data.process && update.data.status) {
-                    uiManager.updateProcessStatus(update.data.process, update.data.status);
-                }
-                break;
-                
-            case 'status_bulk':
-                if (update.data && update.data.updates) {
-                    Object.entries(update.data.updates).forEach(([processName, statusInfo]) => {
-                        uiManager.updateProcessStatus(processName, statusInfo.status);
-                    });
-                }
-                break;
-                
-            case 'server_started':
+    let shouldReload = false;
+    
+    // 1. Handle other updates first (server restart, etc)
+    if (data.other_updates && data.other_updates.length > 0) {
+        data.other_updates.forEach(update => {
+            if (update.type === 'server_started') {
                 console.log('Server restarted - reloading page...');
-                // Give a moment for any final updates, then reload
-                setTimeout(() => {
-                    window.location.reload();
-                }, 500);
-                break;
-        }
-    });
-    
-    // Add any new output lines
-    if (outputLines.length > 0) {
-        uiManager.addOutputLines(outputLines);
+                shouldReload = true;
+            }
+        });
     }
     
+    // 2. Add all output lines in one batch (pre-rendered HTML!)
+    if (data.output_lines && data.output_lines.length > 0) {
+        uiManager.addPreRenderedLines(data.output_lines, data.total_lines);
+    }
+    
+    // 3. Update all process statuses in one batch
+    if (data.status_updates && Object.keys(data.status_updates).length > 0) {
+        uiManager.updateProcessStatuses(data.status_updates);
+    }
+    
+    // 4. Handle page reload if needed
+    if (shouldReload) {
+        setTimeout(() => {
+            window.location.reload();
+        }, 500);
+    }
 }
 
 /**
@@ -201,6 +197,10 @@ function handleStatusChange(statusUpdates) {
 function cleanup() {
     if (pollingManager) {
         pollingManager.stop();
+    }
+    
+    if (uiManager && uiManager.cleanup) {
+        uiManager.cleanup();
     }
 }
 

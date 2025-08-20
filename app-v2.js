@@ -112,6 +112,7 @@ function OvermindApp() {
     const dataProcessor = useRef(null);
     const pollingManager = useRef(null);
     const stateManager = useRef(null);
+    const autoScrollRef = useRef(autoScroll);
     
     // Initialize everything
     useEffect(() => {
@@ -120,9 +121,10 @@ function OvermindApp() {
         return cleanup;
     }, []);
     
-    // Debug autoScroll changes
+    // Debug autoScroll changes and keep ref in sync
     useEffect(() => {
         console.log('AutoScroll state changed to:', autoScroll);
+        autoScrollRef.current = autoScroll;
     }, [autoScroll]);
     
     const fetchVersion = async () => {
@@ -176,8 +178,13 @@ function OvermindApp() {
                     return newLines.length > 5000 ? newLines.slice(-5000) : newLines;
                 });
                 
-                // Don't manually scroll - let followOutput handle it
-                // The followOutput prop will handle auto-scrolling based on autoScroll state
+                // If auto-scroll is enabled, ensure we scroll to bottom after adding new lines
+                setTimeout(() => {
+                    if (autoScrollRef.current && virtuosoRef.current) {
+                        console.log('Auto-scrolling to bottom after new lines added');
+                        virtuosoRef.current.scrollToIndex({ index: 'LAST', behavior: 'auto' });
+                    }
+                }, 10);
             };
             
             // Layer 2: Initialize state manager
@@ -503,9 +510,20 @@ function OvermindApp() {
     };
     
     const handleScrollToBottom = () => {
+        console.log('Scroll to bottom clicked, current lines:', filteredLines.length);
+        
+        // Enable auto-scroll first
         setAutoScroll(true);
-        if (virtuosoRef.current) {
-            virtuosoRef.current.scrollToIndex({ index: 'LAST' });
+        
+        if (virtuosoRef.current && filteredLines.length > 0) {
+            // Force scroll to bottom using LAST index
+            setTimeout(() => {
+                console.log('Scrolling to bottom with LAST index');
+                virtuosoRef.current.scrollToIndex({ 
+                    index: 'LAST',
+                    behavior: 'smooth'
+                });
+            }, 50);
         }
     };
     

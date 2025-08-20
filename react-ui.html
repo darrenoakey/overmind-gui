@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Overmind GUI - React Version</title>
+    
+    <!-- React CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Existing CSS -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="root"></div>
+    
+    <!-- ANSI Utils (existing) -->
+    <script src="utils.js"></script>
+    <!-- Polling Manager (existing) -->
+    <script src="polling.js"></script>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+        // Main App Component
+        function App() {
+            // State
+            const [processes, setProcesses] = useState({});
+            const [lines, setLines] = useState([]);
+            const [selectedProcesses, setSelectedProcesses] = useState(new Set());
+            const [filterText, setFilterText] = useState('');
+            const [searchText, setSearchText] = useState('');
+            const [autoScroll, setAutoScroll] = useState(true);
+            const [isConnected, setIsConnected] = useState(false);
+            const [stats, setStats] = useState({});
+            
+            // Refs
+            const outputRef = useRef(null);
+            const pollingManagerRef = useRef(null);
+            const maxLines = 5000;
+            
+            // Initialize polling manager
+            useEffect(() => {
+                const pollingManager = new window.PollingManager();
+                pollingManagerRef.current = pollingManager;
+                
+                // Set up event handlers
+                pollingManager.onUpdate = (updates) => {
+                    const outputLines = [];
+                    
+                    updates.forEach(update => {
+                        if (update.type === 'output') {
+                            const line = update.data.line || update.data;
+                            outputLines.push(line);
+                        }
+                    });
+                    
+                    if (outputLines.length > 0) {
+                        setLines(prevLines => {
+                            const newLines = [...prevLines, ...outputLines];
+                            // Maintain 5000 line limit
+                            if (newLines.length > maxLines) {
+                                return newLines.slice(-maxLines);
+                            }
+                            return newLines;
+                        });
+                    }
+                };
+                
+                pollingManager.onStatusChange = (statusUpdates) => {
+                    Object.entries(statusUpdates).forEach(([key, value]) => {
+                        if (key === 'connection') {
+                            setIsConnected(value.status === 'connected');
+                        } else if (value.status) {
+                            setProcesses(prev => ({
+                                ...prev,
+                                [key]: { ...prev[key], status: value.status }
+                            }));
+                        }
+                    });
+                };
+                
+                pollingManager.onError = (error) => {
+                    console.error('Polling error:', error);
+                    setIsConnected(false);
+                };
+                
+                // Initialize
+                pollingManager.getInitialState().then(state => {
+                    if (state.processes) {
+                        setProcesses(state.processes);
+                        // Set initial selected processes
+                        const selected = new Set();
+                        Object.entries(state.processes).forEach(([name, process]) => {
+                            if (process.selected) {
+                                selected.add(name);
+                            }
+                        });
+                        setSelectedProcesses(selected);
+                    }
+                    if (state.stats) {
+                        setStats(state.stats);
+                    }
+                    pollingManager.start();
+                    setIsConnected(true);
+                });
+                
+                return () => {
+                    pollingManager.stop();
+                };
+            }, []);
+            
+            // Auto-scroll effect - optimized
+            useEffect(() => {
+                if (autoScroll && outputRef.current) {
+                    outputRef.current.scrollTop = outputRef.current.scrollHeight;
+                }
+            }, [lines, autoScroll]);
+            
+            // Memoized filtered and processed lines for performance
+            const processedLines = useMemo(() => {
+                let filtered = lines;
+                
+                // Filter by selected processes
+                if (selectedProcesses.size > 0) {
+                    filtered = filtered.filter(line => selectedProcesses.has(line.process));
+                }
+                
+                // Filter by text
+                if (filterText.trim()) {
+                    const filter = filterText.toLowerCase();
+                    filtered = filtered.filter(line => 
+                        window.AnsiUtils.stripAnsiCodes(line.text).toLowerCase().includes(filter)
+                    );
+                }
+                
+                return filtered;
+            }, [lines, selectedProcesses, filterText]);
+            
+            // Search results - memoized
+            const searchResults = useMemo(() => {
+                if (!searchText.trim()) return [];
+                
+                const search = searchText.toLowerCase();
+                return processedLines
+                    .map((line, index) => ({ line, index }))
+                    .filter(({ line }) => 
+                        window.AnsiUtils.stripAnsiCodes(line.text).toLowerCase().includes(search)
+                    );
+            }, [processedLines, searchText]);
+            
+            // Handle scroll to detect when user scrolls away from bottom
+            const handleScroll = useCallback(() => {
+                if (!outputRef.current) return;
+                
+                const { scrollTop, scrollHeight, clientHeight } = outputRef.current;
+                const isAtBottom = scrollTop + clientHeight >= scrollHeight - 10;
+                
+                if (!isAtBottom && autoScroll) {
+                    setAutoScroll(false);
+                }
+            }, [autoScroll]);
+            
+            // Process control handlers
+            const toggleProcess = useCallback(async (processName) => {
+                try {
+                    const result = await pollingManagerRef.current?.toggleProcessSelection(processName);
+                    if (result?.success) {
+                        setSelectedProcesses(prev => {
+                            const newSet = new Set(prev);
+                            if (result.selected) {
+                                newSet.add(processName);
+                            } else {
+                                newSet.delete(processName);
+                            }
+                            return newSet;
+                        });
+                    }
+                } catch (error) {
+                    console.error('Toggle process error:', error);
+                }
+            }, []);
+            
+            const clearOutput = useCallback(async () => {
+                try {
+                    await pollingManagerRef.current?.clearOutput();
+                    setLines([]);
+                } catch (error) {
+                    console.error('Clear output error:', error);
+                }
+            }, []);
+            
+            return (
+                <div className="app">
+                    <Header 
+                        stats={stats}
+                        isConnected={isConnected}
+                        autoScroll={autoScroll}
+                        lineCount={processedLines.length}
+                        processCount={Object.keys(processes).length}
+                    />
+                    
+                    <div className="main-content">
+                        <ProcessList 
+                            processes={processes}
+                            selectedProcesses={selectedProcesses}
+                            onToggleProcess={toggleProcess}
+                        />
+                        
+                        <div className="output-section">
+                            <Controls
+                                filterText={filterText}
+                                onFilterChange={setFilterText}
+                                searchText={searchText}
+                                onSearchChange={setSearchText}
+                                searchResults={searchResults}
+                                autoScroll={autoScroll}
+                                onEnableAutoScroll={() => setAutoScroll(true)}
+                                onClearOutput={clearOutput}
+                            />
+                            
+                            <OutputDisplay
+                                lines={processedLines}
+                                searchText={searchText}
+                                outputRef={outputRef}
+                                onScroll={handleScroll}
+                            />
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Header Component
+        function Header({ stats, isConnected, autoScroll, lineCount, processCount }) {
+            return (
+                <header className="header">
+                    <div className="status-bar">
+                        <div className="status-item">
+                            <span className="status-label">Connection:</span>
+                            <span className={`status-value ${isConnected ? 'connected' : 'disconnected'}`}>
+                                {isConnected ? 'Connected' : 'Disconnected'}
+                            </span>
+                        </div>
+                        <div className="status-item">
+                            <span className="status-label">Auto-scroll:</span>
+                            <span className={`status-value ${autoScroll ? 'autoscroll-on' : 'autoscroll-off'}`}>
+                                {autoScroll ? 'ON' : 'OFF'}
+                            </span>
+                        </div>
+                        <div className="status-item">
+                            <span className="status-label">Lines:</span>
+                            <span className="status-value">{lineCount.toLocaleString()}</span>
+                        </div>
+                        <div className="status-item">
+                            <span className="status-label">Processes:</span>
+                            <span className="status-value">{processCount}</span>
+                        </div>
+                    </div>
+                </header>
+            );
+        }
+
+        // Process List Component
+        function ProcessList({ processes, selectedProcesses, onToggleProcess }) {
+            return (
+                <div className="process-panel">
+                    <h3>Processes</h3>
+                    <div className="process-list">
+                        {Object.entries(processes).map(([name, process]) => (
+                            <ProcessItem
+                                key={name}
+                                name={name}
+                                process={process}
+                                selected={selectedProcesses.has(name)}
+                                onToggle={() => onToggleProcess(name)}
+                            />
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        // Process Item Component
+        function ProcessItem({ name, process, selected, onToggle }) {
+            return (
+                <div 
+                    className={`process-item ${selected ? 'selected' : ''}`}
+                    onClick={onToggle}
+                >
+                    <div className="process-info">
+                        <span className="process-name">{name}</span>
+                        <span className={`process-status ${process.status}`}>
+                            {process.status}
+                        </span>
+                    </div>
+                </div>
+            );
+        }
+
+        // Controls Component
+        function Controls({ 
+            filterText, onFilterChange, 
+            searchText, onSearchChange, 
+            searchResults, 
+            autoScroll, onEnableAutoScroll,
+            onClearOutput 
+        }) {
+            return (
+                <div className="controls">
+                    <div className="filter-controls">
+                        <input
+                            type="text"
+                            placeholder="Filter output..."
+                            value={filterText}
+                            onChange={(e) => onFilterChange(e.target.value)}
+                            className="filter-input"
+                        />
+                        
+                        <input
+                            type="text"
+                            placeholder="Search..."
+                            value={searchText}
+                            onChange={(e) => onSearchChange(e.target.value)}
+                            className="search-input"
+                        />
+                        
+                        {searchText && (
+                            <span className="search-results">
+                                {searchResults.length} matches
+                            </span>
+                        )}
+                    </div>
+                    
+                    <div className="action-controls">
+                        {!autoScroll && (
+                            <button 
+                                className="btn btn-primary"
+                                onClick={onEnableAutoScroll}
+                            >
+                                Resume Auto-scroll
+                            </button>
+                        )}
+                        
+                        <button 
+                            className="btn btn-secondary"
+                            onClick={onClearOutput}
+                        >
+                            Clear
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        // Output Display Component - Virtualized for performance
+        function OutputDisplay({ lines, searchText, outputRef, onScroll }) {
+            const highlightSearchText = useCallback((text, search) => {
+                if (!search.trim()) return window.AnsiUtils.ansiToHtml(text);
+                
+                const html = window.AnsiUtils.ansiToHtml(text);
+                return window.AnsiUtils.highlightSearchInHtml(html, search);
+            }, []);
+            
+            return (
+                <div 
+                    className="output-display"
+                    ref={outputRef}
+                    onScroll={onScroll}
+                >
+                    <div className="output-lines">
+                        {lines.map((line, index) => (
+                            <OutputLine
+                                key={`${line.id || index}`}
+                                line={line}
+                                searchText={searchText}
+                                highlightSearchText={highlightSearchText}
+                            />
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        // Individual Output Line Component - Memoized for performance
+        const OutputLine = React.memo(function OutputLine({ line, searchText, highlightSearchText }) {
+            const htmlContent = useMemo(() => 
+                highlightSearchText(line.text, searchText), 
+                [line.text, searchText, highlightSearchText]
+            );
+            
+            return (
+                <div 
+                    className={`output-line process-${line.process}`}
+                    data-process={line.process}
+                    dangerouslySetInnerHTML={{ __html: htmlContent }}
+                />
+            );
+        });
+
+        // Initialize the app
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

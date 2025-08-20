@@ -51,12 +51,13 @@ class UIManager {
     }
     
     /**
-     * Debounce function for search and filter
+     * Create a debounce function with its own timer
      */
     debounce(func, wait) {
+        let timeoutId;
         return (...args) => {
-            clearTimeout(this.debounceTimer);
-            this.debounceTimer = setTimeout(() => func.apply(this, args), wait);
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => func.apply(this, args), wait);
         };
     }
     
@@ -131,27 +132,22 @@ class UIManager {
         // Auto-scroll button (floating)
         this.elements.autoScrollBtn.addEventListener('click', () => this.enableAutoScroll());
         
-        // Mouse wheel detection - disable autoscroll on user wheel scroll
-        this.elements.outputLines.addEventListener('wheel', (e) => {
-            // Only disable autoscroll if this is a real user wheel event, not our programmatic scroll
-            if (this.autoScroll && !this.programmaticScroll) {
-                this.autoScroll = false;
-                this.updateAutoScrollButton();
-                console.log('Auto-scroll disabled by mouse wheel');
+        // PROPER EVENT-DRIVEN AUTO-SCROLL: Listen for actual scroll events
+        this.elements.outputLines.addEventListener('scroll', (e) => {
+            // Only react to user-initiated scrolling (not our programmatic scrolls)
+            if (this.programmaticScroll) {
+                return; // Ignore programmatic scrolls
             }
-        });
-        
-        // Detect scrollbar interaction - only way to disable autoscroll via scrolling
-        this.elements.outputLines.addEventListener('mousedown', (e) => {
-            // Check if mousedown is on scrollbar (right side of output-lines)
-            const containerRect = this.elements.outputLines.getBoundingClientRect();
-            const clickX = e.clientX - containerRect.left;
             
-            // If clicking in scrollbar area (right edge), disable autoscroll
-            if (clickX > this.elements.outputLines.clientWidth) {
+            // Check if user scrolled away from the bottom
+            const container = this.elements.outputLines;
+            const isAtBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 10;
+            
+            if (this.autoScroll && !isAtBottom) {
+                // User scrolled up - disable auto-scroll
                 this.autoScroll = false;
                 this.updateAutoScrollButton();
-                console.log('Auto-scroll disabled by scrollbar interaction');
+                console.log('Auto-scroll disabled by user scrolling up');
             }
         });
         
@@ -205,7 +201,7 @@ class UIManager {
         // Batch process all lines
         for (let i = 0; i < lines.length; i++) {
             const lineElement = lines[i];
-            const lineText = window.AnsiUtils.stripAnsiCodes(lineElement.textContent).toLowerCase();
+            const lineText = lineElement.dataset.cleanText?.toLowerCase() || lineElement.textContent.toLowerCase();
             const shouldBeVisible = !this.isFilterActive || lineText.includes(filter);
             
             // Only modify DOM if class needs to change
@@ -248,7 +244,7 @@ class UIManager {
         const lineElements = this.elements.outputLines.querySelectorAll('.output-line:not(.filtered-hidden)');
         
         lineElements.forEach((lineElement, index) => {
-            const lineText = window.AnsiUtils.stripAnsiCodes(lineElement.textContent).toLowerCase();
+            const lineText = lineElement.dataset.cleanText?.toLowerCase() || lineElement.textContent.toLowerCase();
             if (lineText.includes(search.toLowerCase())) {
                 this.searchMatches.push({
                     element: lineElement,
@@ -285,7 +281,9 @@ class UIManager {
             lineElement.dataset.originalHtml = originalHtml;
             
             if (this.isSearchActive) {
-                const highlightedHtml = window.AnsiUtils.highlightSearchInHtml(originalHtml, searchTerm);
+                // Use simple text-based highlighting since we don't need ANSI preservation for search
+                const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+                const highlightedHtml = originalHtml.replace(regex, '<mark class="search-highlight">$1</mark>');
                 // Only update innerHTML if it's actually different
                 if (lineElement.innerHTML !== highlightedHtml) {
                     lineElement.innerHTML = highlightedHtml;
@@ -556,6 +554,41 @@ class UIManager {
     }
     
     /**
+     * Batch update multiple process statuses - optimized for performance
+     */
+    updateProcessStatuses(statusUpdates) {
+        // Batch DOM queries and updates for better performance
+        const processItems = this.elements.processList.querySelectorAll('[data-process]');
+        const processItemMap = new Map();
+        
+        // Build a map of process names to DOM elements
+        processItems.forEach(item => {
+            const processName = item.dataset.process;
+            if (processName && statusUpdates.hasOwnProperty(processName)) {
+                processItemMap.set(processName, item);
+            }
+        });
+        
+        // Update all statuses at once
+        Object.entries(statusUpdates).forEach(([processName, status]) => {
+            // Update DOM
+            const processItem = processItemMap.get(processName);
+            if (processItem) {
+                const statusElement = processItem.querySelector('.process-status');
+                if (statusElement) {
+                    statusElement.textContent = status;
+                    statusElement.className = `process-status ${status}`;
+                }
+            }
+            
+            // Update in our processes data
+            if (this.processes[processName]) {
+                this.processes[processName].status = status;
+            }
+        });
+    }
+    
+    /**
      * Add a single output line with efficient buffer management
      */
     addOutputLine(line) {
@@ -595,7 +628,7 @@ class UIManager {
         if (this.isSearchActive) {
             const searchTerm = this.elements.searchInput.value.trim();
             if (searchTerm) {
-                const lineText = window.AnsiUtils.stripAnsiCodes(lineElement.textContent).toLowerCase();
+                const lineText = lineElement.dataset.cleanText?.toLowerCase() || lineElement.textContent.toLowerCase();
                 if (lineText.includes(searchTerm.toLowerCase())) {
                     this.searchMatches.push({
                         element: lineElement,
@@ -615,16 +648,19 @@ class UIManager {
         lineElement.dataset.lineId = line.id;
         lineElement.dataset.process = line.process;
         
-        // Convert ANSI codes to HTML and store original
-        const htmlContent = window.AnsiUtils.ansiToHtml(line.text);
-        lineElement.innerHTML = htmlContent;
-        lineElement.dataset.originalHtml = htmlContent;
+        // OLD METHOD - should not be called with new protocol
+        console.warn('addOutputLine called - should use addPreRenderedLines instead');
         
-        // Apply current search highlighting if active
+        // Fallback: treat as plain text since we don't have pre-rendered HTML
+        lineElement.textContent = line.text;
+        
+        // Add search highlighting if needed (basic text highlighting)
         if (this.isSearchActive && this.elements.searchInput.value.trim()) {
             const searchTerm = this.elements.searchInput.value.trim();
-            const highlightedHtml = window.AnsiUtils.highlightSearchInHtml(htmlContent, searchTerm);
-            lineElement.innerHTML = highlightedHtml;
+            if (line.text.toLowerCase().includes(searchTerm.toLowerCase())) {
+                const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+                lineElement.innerHTML = line.text.replace(regex, '<mark class="search-highlight">$1</mark>');
+            }
         }
         
         // Apply visibility based on current filter settings
@@ -704,6 +740,124 @@ class UIManager {
     }
     
     /**
+     * Add pre-rendered HTML lines - OPTIMIZED for backend-processed content
+     */
+    addPreRenderedLines(preRenderedLines, totalBackendLines) {
+        if (preRenderedLines.length === 0) return;
+        
+        console.log(`Adding ${preRenderedLines.length} pre-rendered lines`);
+        
+        // 1. Create document fragment for batch DOM insertion
+        const fragment = document.createDocumentFragment();
+        
+        // 2. Process each pre-rendered line
+        preRenderedLines.forEach(lineData => {
+            // lineData = {id, html, clean_text, process, timestamp}
+            
+            const lineElement = document.createElement('div');
+            lineElement.className = 'output-line';
+            lineElement.dataset.lineId = lineData.id;
+            lineElement.dataset.process = lineData.process;
+            lineElement.dataset.timestamp = lineData.timestamp;
+            
+            // Use pre-rendered HTML directly - NO FRONTEND ANSI PROCESSING!
+            lineElement.innerHTML = lineData.html;
+            
+            // Store clean text for search/filter (only when needed)
+            lineElement.dataset.cleanText = lineData.clean_text;
+            
+            // Add to our line tracking
+            this.currentLines.push({
+                id: lineData.id,
+                element: lineElement,
+                cleanText: lineData.clean_text,
+                process: lineData.process
+            });
+            
+            // Check if this line should be visible (filter/process selection)
+            const shouldShow = this.shouldShowLine(lineData.process, lineData.clean_text);
+            if (!shouldShow) {
+                lineElement.classList.add('filtered-hidden');
+            }
+            
+            fragment.appendChild(lineElement);
+        });
+        
+        // 3. Manage line limit efficiently
+        if (this.currentLines.length > this.maxLines) {
+            const toRemove = this.currentLines.length - this.maxLines;
+            console.log(`Removing ${toRemove} old lines to maintain ${this.maxLines} limit`);
+            
+            // Remove old elements from DOM
+            for (let i = 0; i < toRemove; i++) {
+                const oldLine = this.currentLines[i];
+                if (oldLine.element && oldLine.element.parentNode) {
+                    oldLine.element.parentNode.removeChild(oldLine.element);
+                }
+            }
+            
+            // Remove from our tracking
+            this.currentLines.splice(0, toRemove);
+        }
+        
+        // 4. Add all new lines to DOM at once
+        this.elements.outputLines.appendChild(fragment);
+        
+        // 5. Auto-scroll if enabled
+        if (this.autoScroll) {
+            this.scrollToBottom();
+        }
+        
+        // 6. Update search matches ONLY if search is active
+        if (this.isSearchActive) {
+            this.updateSearchMatchesForPreRenderedLines(preRenderedLines);
+        }
+        
+        // 7. Update line count
+        this.updateDisplayedLineCount(this.getVisibleLineCount());
+    }
+    
+    /**
+     * Check if a line should be shown based on current filters
+     */
+    shouldShowLine(processName, cleanText) {
+        // Check process selection
+        if (this.processes[processName] && !this.processes[processName].selected) {
+            return false;
+        }
+        
+        // Check text filter
+        if (this.isFilterActive) {
+            const filterText = this.elements.filterInput.value.trim().toLowerCase();
+            if (filterText && !cleanText.toLowerCase().includes(filterText)) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Update search matches for pre-rendered lines - only when search is active
+     */
+    updateSearchMatchesForPreRenderedLines(preRenderedLines) {
+        const searchTerm = this.elements.searchInput.value.trim().toLowerCase();
+        if (!searchTerm) return;
+        
+        // Process new lines for search matches using pre-processed clean text
+        preRenderedLines.forEach(lineData => {
+            if (lineData.clean_text.toLowerCase().includes(searchTerm)) {
+                const lineElement = this.elements.outputLines.querySelector(`[data-line-id="${lineData.id}"]`);
+                if (lineElement && !lineElement.classList.contains('filtered-hidden')) {
+                    this.searchMatches.push(lineElement);
+                }
+            }
+        });
+        
+        this.updateSearchResults();
+    }
+    
+    /**
      * Batch update search matches for new lines
      */
     updateSearchMatchesForNewLines(lines) {
@@ -714,7 +868,7 @@ class UIManager {
         lines.forEach(line => {
             const lineElement = this.elements.outputLines.querySelector(`[data-line-id="${line.id}"]`);
             if (lineElement) {
-                const lineText = window.AnsiUtils.stripAnsiCodes(lineElement.textContent).toLowerCase();
+                const lineText = lineElement.dataset.cleanText?.toLowerCase() || lineElement.textContent.toLowerCase();
                 if (lineText.includes(searchTerm)) {
                     this.searchMatches.push({
                         element: lineElement,
@@ -888,31 +1042,56 @@ class UIManager {
      * Scroll to bottom of output
      */
     scrollToBottom() {
-        // Set flag to prevent wheel event from firing during our programmatic scroll
+        // Set flag to prevent scroll event from disabling auto-scroll during our programmatic scroll
         this.programmaticScroll = true;
+        
+        // Perform the scroll
         this.elements.outputLines.scrollTop = this.elements.outputLines.scrollHeight;
-        // Clear flag after scroll completes
-        setTimeout(() => {
-            this.programmaticScroll = false;
-        }, 10);
+        
+        // Clear flag after scroll event fires (use requestAnimationFrame for better timing)
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                this.programmaticScroll = false;
+            });
+        });
     }
     
     /**
-     * Start monitoring scroll position to enforce autoscroll
+     * Initialize scroll event handling (event-driven, not polling)
      */
     startScrollMonitoring() {
-        // Check every 100ms if autoscroll is on and we're not at bottom
-        this.scrollCheckInterval = setInterval(() => {
-            if (this.autoScroll) {
-                const container = this.elements.outputLines;
-                const isAtBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 10;
-                
-                if (!isAtBottom) {
-                    // Force scroll to bottom when autoscroll is on
-                    this.scrollToBottom();
-                }
-            }
-        }, 100);
+        // PERFORMANCE FIX: No more polling! Auto-scroll is now purely event-driven:
+        // 1. User scrolls → 'scroll' event → disable auto-scroll if scrolled up
+        // 2. New content arrives → addOutputLines() → scroll to bottom if auto-scroll enabled
+        // 3. User clicks scroll button → enable auto-scroll + scroll to bottom
+        
+        // Clear any old interval (legacy cleanup)
+        if (this.scrollCheckInterval) {
+            clearInterval(this.scrollCheckInterval);
+            this.scrollCheckInterval = null;
+        }
+        
+        console.log('Auto-scroll is now purely event-driven - no polling!');
+    }
+    
+    /**
+     * Cleanup resources and intervals
+     */
+    cleanup() {
+        if (this.scrollCheckInterval) {
+            clearInterval(this.scrollCheckInterval);
+            this.scrollCheckInterval = null;
+        }
+        
+        if (this.searchDebounceTimer) {
+            clearTimeout(this.searchDebounceTimer);
+            this.searchDebounceTimer = null;
+        }
+        
+        if (this.filterDebounceTimer) {
+            clearTimeout(this.filterDebounceTimer);
+            this.filterDebounceTimer = null;
+        }
     }
     
     /**

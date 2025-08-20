@@ -1,6 +1,7 @@
 """
 Update Queue - Simple message queue system for polling
 Backend only queues unsent messages, frontend manages display and limits
+Now includes ANSI processing and pre-rendered HTML for performance
 """
 
 import time
@@ -8,6 +9,8 @@ import unittest
 from collections import deque
 from threading import Lock
 from typing import Dict, List, Optional, Any, Tuple
+
+from ansi_processor import ansi_processor
 
 
 class UpdateItem:
@@ -32,7 +35,7 @@ class UpdateItem:
 class UpdateQueue:
     """Simple message queue system for polling clients"""
     
-    def __init__(self, max_queue_size: int = 10000):
+    def __init__(self, max_queue_size: int = 5000):
         self.updates: deque = deque(maxlen=max_queue_size)
         self.lock = Lock()
         self.last_poll_cleanup = time.time()
@@ -43,20 +46,20 @@ class UpdateQueue:
         self.process_statuses: Dict[str, str] = {}
     
     def add_output_line(self, line_text: str, process_name: str):
-        """Add a new output line update - just queue it"""
+        """Add a new output line update - pre-process with ANSI conversion"""
         with self.lock:
             self.line_counter += 1
             
-            # Create line data
-            line_dict = {
-                'id': self.line_counter,
-                'text': line_text,
-                'process': process_name,
-                'timestamp': time.time()
-            }
+            # Process line through ANSI processor for pre-rendered HTML
+            processed_line = ansi_processor.process_line(
+                line_text, 
+                self.line_counter, 
+                process_name, 
+                time.time()
+            )
             
-            # Add to update queue
-            update = UpdateItem('output', line_dict)
+            # Create update with pre-processed data
+            update = UpdateItem('output', processed_line)
             self.updates.append(update)
     
     def add_status_update(self, process_name: str, status: str):
@@ -96,10 +99,18 @@ class UpdateQueue:
             with self.lock:
                 self.updates.append(update)
     
-    def poll_updates(self, since_timestamp: float = None) -> Tuple[List[Dict[str, Any]], float]:
+    def poll_updates(self, since_timestamp: float = None) -> Tuple[Dict[str, Any], float]:
         """
-        Poll for updates since timestamp
-        Returns (updates, current_timestamp)
+        Poll for updates since timestamp - NEW OPTIMIZED FORMAT
+        Returns (response_package, current_timestamp)
+        
+        Response package format:
+        {
+            'output_lines': [{'id': int, 'html': str, 'clean_text': str, 'process': str, 'timestamp': float}],
+            'status_updates': {'process_name': 'status', ...},
+            'total_lines': int,  # Total lines in backend buffer for cleanup decisions
+            'other_updates': [...]  # server_started, etc.
+        }
         """
         current_time = time.time()
         
@@ -119,7 +130,34 @@ class UpdateQueue:
                     if update.timestamp > since_timestamp
                 ]
         
-        return [update.to_dict() for update in relevant_updates], current_time
+        # Separate and consolidate updates by type
+        output_lines = []
+        latest_statuses = {}
+        other_updates = []
+        
+        for update in relevant_updates:
+            if update.type == 'output':
+                output_lines.append(update.data)
+            elif update.type == 'status':
+                # Keep only the latest status for each process
+                process = update.data['process']
+                latest_statuses[process] = update.data['status']
+            elif update.type == 'status_bulk':
+                # Merge bulk status updates
+                for process, status_info in update.data['updates'].items():
+                    latest_statuses[process] = status_info['status']
+            else:
+                other_updates.append(update.to_dict())
+        
+        # Build optimized response package
+        response_package = {
+            'output_lines': output_lines,
+            'status_updates': latest_statuses,
+            'total_lines': self.line_counter,  # For frontend line limit management
+            'other_updates': other_updates
+        }
+        
+        return response_package, current_time
     
     def get_current_state(self) -> Dict[str, Any]:
         """Get basic current state (no lines, just metadata)"""
