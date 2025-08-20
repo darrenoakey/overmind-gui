@@ -1,6 +1,6 @@
 /**
  * Polling module for Overmind GUI
- * Handles polling server for updates every 250ms (4x per second)
+ * Handles polling server for updates every 1000ms (1x per second)
  */
 
 class PollingManager {
@@ -8,13 +8,13 @@ class PollingManager {
         this.isPolling = false;
         this.pollInterval = null;
         this.lastTimestamp = null;
-        this.pollFrequency = 250; // 4 times per second
+        this.pollFrequency = 1000; // Once per second
         this.errorRetryDelay = 2000; // 2 seconds
         this.maxRetries = 5;
         this.retryCount = 0;
         
-        // Event handlers
-        this.onUpdate = null;
+        // Event handlers - NEW PROTOCOL
+        this.onPollingResponse = null;  // NEW: handles complete polling response
         this.onError = null;
         this.onStatusChange = null;
         
@@ -83,9 +83,17 @@ class PollingManager {
             // Update stats
             this.stats = data.stats || {};
             
-            // Process updates with batching
-            if (data.updates && data.updates.length > 0) {
-                await this.processUpdatesBatched(data.updates);
+            // NEW PROTOCOL: Send complete response to handler
+            if (this.onPollingResponse) {
+                this.onPollingResponse(data);
+            }
+            
+            // Handle status changes separately for connection indicator
+            if (data.status_updates && Object.keys(data.status_updates).length > 0) {
+                this.handleConsolidatedStatusUpdates([{
+                    type: 'status_bulk',
+                    data: { updates: data.status_updates }
+                }]);
             }
             
             // Mark as connected and reset retry count
@@ -123,44 +131,99 @@ class PollingManager {
      * Process updates from server with batching
      */
     async processUpdatesBatched(updates) {
-        // Separate updates by type for batched processing
-        const outputUpdates = [];
-        const statusUpdates = [];
+        // Consolidate all updates into a single batch for one DOM update
+        const consolidatedUpdates = this.consolidateUpdates(updates);
+        
+        // Single notification with consolidated updates
+        if (this.onUpdate && consolidatedUpdates.length > 0) {
+            this.onUpdate(consolidatedUpdates);
+        }
+        
+        // Handle status updates separately for onStatusChange callback
+        this.handleConsolidatedStatusUpdates(updates);
+    }
+    
+    /**
+     * Consolidate updates to minimize DOM operations
+     */
+    consolidateUpdates(updates) {
+        const outputLines = [];
+        const latestStatuses = new Map(); // Process -> latest status
         const otherUpdates = [];
         
+        // First pass: collect all outputs and find latest status for each process
         for (const update of updates) {
             switch (update.type) {
                 case 'output':
-                    outputUpdates.push(update);
+                    outputLines.push(update);
                     break;
                 case 'status':
+                    // Keep only the latest status for each process
+                    if (update.data && update.data.process) {
+                        latestStatuses.set(update.data.process, update);
+                    }
+                    break;
                 case 'status_bulk':
-                    statusUpdates.push(update);
+                    // Handle bulk status updates
+                    if (update.data && update.data.updates) {
+                        Object.entries(update.data.updates).forEach(([processName, statusInfo]) => {
+                            // Create individual status update for latest status tracking
+                            const statusUpdate = {
+                                ...update,
+                                type: 'status',
+                                data: {
+                                    process: processName,
+                                    status: statusInfo.status,
+                                    old_status: statusInfo.old_status
+                                }
+                            };
+                            latestStatuses.set(processName, statusUpdate);
+                        });
+                    }
                     break;
                 default:
-                    console.warn('Unknown update type:', update.type);
                     otherUpdates.push(update);
             }
         }
         
-        // Process output updates in batches (most critical for performance)
-        if (outputUpdates.length > 0) {
-            await this.handleBatchedOutputUpdates(outputUpdates);
+        // Build final consolidated update list
+        const consolidated = [];
+        
+        // Add all output updates (order matters for output)
+        consolidated.push(...outputLines);
+        
+        // Add only the latest status for each process
+        consolidated.push(...Array.from(latestStatuses.values()));
+        
+        // Add other updates
+        consolidated.push(...otherUpdates);
+        
+        return consolidated;
+    }
+    
+    /**
+     * Handle consolidated status updates for onStatusChange callback
+     */
+    handleConsolidatedStatusUpdates(updates) {
+        const statusChanges = {};
+        
+        // Collect all status changes, keeping only the latest for each process
+        for (const update of updates) {
+            if (update.type === 'status' && update.data && update.data.process) {
+                statusChanges[update.data.process] = {
+                    status: update.data.status,
+                    old_status: update.data.old_status
+                };
+            } else if (update.type === 'status_bulk' && update.data && update.data.updates) {
+                Object.entries(update.data.updates).forEach(([processName, statusInfo]) => {
+                    statusChanges[processName] = statusInfo;
+                });
+            }
         }
         
-        // Process status updates
-        if (statusUpdates.length > 0) {
-            this.handleBatchedStatusUpdates(statusUpdates);
-        }
-        
-        // Process other updates individually
-        for (const update of otherUpdates) {
-            this.handleGenericUpdate(update);
-        }
-        
-        // Notify about updates (after all processing)
-        if (this.onUpdate && updates.length > 0) {
-            this.onUpdate(updates);
+        // Notify with consolidated status changes
+        if (Object.keys(statusChanges).length > 0 && this.onStatusChange) {
+            this.onStatusChange(statusChanges);
         }
     }
     
@@ -173,36 +236,11 @@ class PollingManager {
     }
     
     /**
-     * Handle batched output updates (critical for performance)
+     * Handle batched output updates (LEGACY - not used with new protocol)
      */
     async handleBatchedOutputUpdates(outputUpdates) {
-        if (outputUpdates.length === 0) return;
-        
-        // Yield control to allow DOM updates if we have many lines
-        if (outputUpdates.length > 50) {
-            console.log(`Processing ${outputUpdates.length} output lines in batches`);
-            
-            // Process in chunks of 25 to prevent UI blocking
-            const CHUNK_SIZE = 25;
-            for (let i = 0; i < outputUpdates.length; i += CHUNK_SIZE) {
-                const chunk = outputUpdates.slice(i, i + CHUNK_SIZE);
-                
-                // Process chunk
-                if (this.onUpdate) {
-                    this.onUpdate(chunk);
-                }
-                
-                // Yield control every chunk to prevent UI blocking
-                if (i + CHUNK_SIZE < outputUpdates.length) {
-                    await new Promise(resolve => setTimeout(resolve, 0));
-                }
-            }
-        } else {
-            // Process all at once for smaller batches
-            if (this.onUpdate) {
-                this.onUpdate(outputUpdates);
-            }
-        }
+        console.warn('handleBatchedOutputUpdates called - this should not happen with new protocol');
+        // This method is no longer used with the new optimized protocol
     }
     
     /**
@@ -428,5 +466,5 @@ class PollingManager {
     }
 }
 
-// Export for use in other modules
-window.PollingManager = PollingManager;
+// ES Module export
+export default PollingManager;

@@ -22,6 +22,7 @@ import threading
 import time
 import traceback
 import inspect
+import socket
 
 from sanic import Sanic
 
@@ -40,6 +41,20 @@ warnings.filterwarnings(
     message="pkg_resources is deprecated as an API.*",
     module="tracerite.html",
 )
+
+# -----------------------------------------------------------------------------
+# Port management
+# -----------------------------------------------------------------------------
+def find_available_port(start_port=8000, max_attempts=100):
+    """Find an available port starting from start_port"""
+    for port in range(start_port, start_port + max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind(('127.0.0.1', port))
+                return port
+        except OSError:
+            continue
+    raise RuntimeError(f"No available ports found in range {start_port}-{start_port + max_attempts}")
 
 # -----------------------------------------------------------------------------
 # Version management
@@ -471,16 +486,46 @@ async def cleanup(app_instance, _loop):
 # UI-only launcher
 # -----------------------------------------------------------------------------
 def launch_ui(port: int, is_subprocess: bool = False):
-    """Launch the desktop UI using webview"""
+    """Launch the desktop UI - uses system browser by default, pywebview if USE_PYTHON_WEBVIEW is set"""
+    # Check if pywebview should be used (when USE_PYTHON_WEBVIEW is set)
+    use_webview = os.environ.get('USE_PYTHON_WEBVIEW', '').lower() in ('1', 'true', 'yes')
+    
+    if not use_webview:
+        # Default path: open in system browser
+        import webbrowser
+        url = f"http://localhost:{port}"
+        print(f"[UI] Opening {url} in default system browser")
+        print("[UI] Set USE_PYTHON_WEBVIEW=1 to use pywebview instead")
+        
+        try:
+            webbrowser.open(url)
+            print("[UI] Browser launched successfully")
+        except Exception as e:
+            print(f"[UI] Error launching browser: {e}")
+            print(f"[UI] Please manually open {url} in your browser")
+        
+        # For subprocess mode, we need to wait/block instead of returning immediately
+        # Otherwise the subprocess exits and triggers shutdown
+        if is_subprocess:
+            print("[UI] Browser mode: keeping subprocess alive, close server with Ctrl+C")
+            # Wait for shutdown signal instead of exiting
+            while not shutdown_event.is_set():
+                time.sleep(1)
+            print("[UI] Browser mode: shutdown event received, subprocess exiting")
+        return
+    
+    # pywebview path (when USE_PYTHON_WEBVIEW is enabled)
     try:
         # Check if webview is available
         # pylint: disable=import-outside-toplevel,redefined-outer-name,reimported
         import webview
     except ImportError:
         print("[UI] ERROR: pywebview is not installed!")
-        print("[UI] The GUI requires pywebview. Install it with: pip install pywebview")
+        print("[UI] Install it with: pip install pywebview")
         print(f"[UI] Falling back to browser mode - open http://localhost:{port} "
               "in your browser")
+        import webbrowser
+        webbrowser.open(f"http://localhost:{port}")
         return
 
     # Check if we're in a headless environment
@@ -555,21 +600,28 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ui", action="store_true", help="UI-only mode")
     parser.add_argument("--no-ui", action="store_true", help="Run server without UI")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port")
+    parser.add_argument("--port", type=int, default=None, help="Port (auto-allocated if not specified)")
     
     # Parse known args and collect unknown args to pass to overmind
     args, unknown_args = parser.parse_known_args()
     
     # Store overmind arguments for passthrough
     app.ctx.overmind_args = unknown_args
+    
+    # Dynamic port allocation
+    if args.port is None:
+        port = find_available_port(DEFAULT_PORT)
+        print(f"Auto-allocated port: {port}")
+    else:
+        port = args.port
     if unknown_args:
         print(f"Passing additional arguments to overmind: {' '.join(unknown_args)}")
 
-    app.config.UI_PORT = args.port
+    app.config.UI_PORT = port
 
     if args.ui:
         # Running as UI subprocess
-        launch_ui(args.port, is_subprocess=True)
+        launch_ui(port, is_subprocess=True)
         return 0
 
     # Check for Procfile
@@ -588,10 +640,10 @@ def main():
         print("Please install overmind: brew install overmind")
         print("Continuing anyway - GUI will work but process management will be limited")
 
-    print(f"Starting Overmind GUI (polling-based) on {HOST}:{args.port}")
+    print(f"Starting Overmind GUI (polling-based) on {HOST}:{port}")
 
     if args.no_ui:
-        print(f"UI launch disabled - access the GUI at http://localhost:{args.port}")
+        print(f"UI launch disabled - access the GUI at http://localhost:{port}")
         os.environ['NO_UI_LAUNCH'] = '1'
     else:
         print("UI will launch automatically. Use --no-ui to disable.")
@@ -601,7 +653,7 @@ def main():
     try:
         app.run(
             host=HOST,
-            port=args.port,
+            port=port,
             debug=True,
             auto_reload=False,
             workers=1,
@@ -627,6 +679,12 @@ class TestOvermindGui(unittest.TestCase):
         """Test default configuration values"""
         self.assertEqual(DEFAULT_PORT, 8000)
         self.assertEqual(HOST, "127.0.0.1")
+        
+    def test_port_allocation(self):
+        """Test dynamic port allocation"""
+        port = find_available_port(8000)
+        self.assertIsInstance(port, int)
+        self.assertGreaterEqual(port, 8000)
 
     def test_app_initialization(self):
         """Test that the Sanic app is properly initialized"""

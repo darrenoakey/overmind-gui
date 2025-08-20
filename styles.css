@@ -995,6 +995,9 @@ body {
 
 /* Output line base styles */
 .output-line {
+    /* Layer 4: CSS contain optimization for performance */
+    contain: content;
+    
     font-family: var(--font-mono);
     font-size: var(--font-sm);
     line-height: 1.4;

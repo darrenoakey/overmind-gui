@@ -17,8 +17,20 @@ def setup_static_routes(app: Sanic):
     script_dir = os.path.dirname(__file__)
 
     @app.route("/")
+    @app.route("/index.html", name="index_html")
     async def index(_request):
-        """Serve the main HTML page"""
+        """Serve the high-performance HTML page"""
+        try:
+            return await file(os.path.join(script_dir, "index-v2.html"),
+                             mime_type="text/html")
+        except FileNotFoundError as exc:
+            raise NotFound("index-v2.html not found") from exc
+    
+    # Legacy route for old version (if needed for debugging)
+    @app.route("/v1", name="index_v1")
+    @app.route("/old.html", name="index_old") 
+    async def index_old(_request):
+        """Serve the old HTML page (legacy)"""
         try:
             return await file(os.path.join(script_dir, "index.html"),
                              mime_type="text/html")
@@ -112,6 +124,47 @@ def setup_static_routes(app: Sanic):
                              mime_type="application/javascript")
         except FileNotFoundError:
             return text("// components.js file not found",
+                       content_type="application/javascript", status=404)
+
+    # High-performance architecture files
+    @app.route("/app-v2.js", name="app_v2_js")
+    async def app_v2_js(_request):
+        """Serve high-performance app JavaScript file"""
+        try:
+            return await file(os.path.join(script_dir, "app-v2.js"),
+                             mime_type="application/javascript")
+        except FileNotFoundError:
+            return text("// app-v2.js file not found",
+                       content_type="application/javascript", status=404)
+    
+    @app.route("/state-manager.js", name="state_manager_js")
+    async def state_manager_js(_request):
+        """Serve state manager JavaScript file"""
+        try:
+            return await file(os.path.join(script_dir, "state-manager.js"),
+                             mime_type="application/javascript")
+        except FileNotFoundError:
+            return text("// state-manager.js file not found",
+                       content_type="application/javascript", status=404)
+    
+    @app.route("/virtual-list.js", name="virtual_list_js")
+    async def virtual_list_js(_request):
+        """Serve virtual list JavaScript file"""
+        try:
+            return await file(os.path.join(script_dir, "virtual-list.js"),
+                             mime_type="application/javascript")
+        except FileNotFoundError:
+            return text("// virtual-list.js file not found",
+                       content_type="application/javascript", status=404)
+    
+    @app.route("/data-processor.worker.js", name="data_processor_worker_js")
+    async def data_processor_worker_js(_request):
+        """Serve data processor web worker file"""
+        try:
+            return await file(os.path.join(script_dir, "data-processor.worker.js"),
+                             mime_type="application/javascript")
+        except FileNotFoundError:
+            return text("// data-processor.worker.js file not found",
                        content_type="application/javascript", status=404)
 
     @app.route("/favicon.ico")
