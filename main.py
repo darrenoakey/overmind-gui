@@ -43,9 +43,20 @@ warnings.filterwarnings(
 )
 
 # -----------------------------------------------------------------------------
+# Port Configuration - CRITICAL SECTION
+# -----------------------------------------------------------------------------
+# WARNING: DO NOT USE HARDCODED PORTS ANYWHERE EXCEPT DEFAULT_PORT_START
+# The actual port will be dynamically allocated and stored in ALLOCATED_PORT_DONT_CHANGE
+DEFAULT_PORT_START = 8000  # Only used as starting point for port search
+HOST = "127.0.0.1"
+
+# CRITICAL: This will be set to the actual allocated port - DO NOT MODIFY ANYWHERE ELSE
+ALLOCATED_PORT_DONT_CHANGE = None
+
+# -----------------------------------------------------------------------------
 # Port management
 # -----------------------------------------------------------------------------
-def find_available_port(start_port=8000, max_attempts=100):
+def find_available_port(start_port=DEFAULT_PORT_START, max_attempts=100):
     """Find an available port starting from start_port"""
     for port in range(start_port, start_port + max_attempts):
         try:
@@ -82,19 +93,13 @@ def get_and_increment_version():
         return 1
 
 # -----------------------------------------------------------------------------
-# Defaults
-# -----------------------------------------------------------------------------
-DEFAULT_PORT = 8000
-HOST = "127.0.0.1"
-
-# -----------------------------------------------------------------------------
 # App setup
 # -----------------------------------------------------------------------------
 app = Sanic("OvermindGUI")
 app.config.DEBUG = True
 app.config.AUTO_RELOAD = False
-app.config.UI_PORT = DEFAULT_PORT
 app.config.WORKERS = 1
+# UI_PORT will be stored in app.ctx at runtime - NO CONFIG FILES!
 
 # Get version and store in app context
 app.ctx.version = get_and_increment_version()
@@ -293,20 +298,42 @@ async def ui_launcher_task(app_instance):
     """Launch the UI subprocess"""
     proc = None
     try:
-        port = app_instance.config.UI_PORT
-        print(f"[UI] Attempting to launch UI subprocess on port {port}")
+        # ====================================================================
+        # CRITICAL: Port must match ALLOCATED_PORT_DONT_CHANGE
+        # ====================================================================
+        global ALLOCATED_PORT_DONT_CHANGE
+        
+        port_from_context = app_instance.ctx.UI_PORT
+        port_from_global = ALLOCATED_PORT_DONT_CHANGE
+        
+        print(f"🔌 [UI LAUNCHER] Port from context: {port_from_context}")
+        print(f"🔌 [UI LAUNCHER] Port from global: {port_from_global}")
+        
+        # VERIFICATION: These MUST match or we have a bug
+        if port_from_context != port_from_global:
+            raise RuntimeError(f"PORT MISMATCH BUG! Context={port_from_context}, Global={port_from_global}")
+        
+        # Use the global variable as the source of truth
+        THE_CORRECT_PORT = ALLOCATED_PORT_DONT_CHANGE
+        print(f"🔌 [UI LAUNCHER] Using THE_CORRECT_PORT = {THE_CORRECT_PORT}")
 
         # Check if we should launch UI
         if os.environ.get('NO_UI_LAUNCH', '').lower() in ('1', 'true', 'yes'):
             print("[UI] UI launch disabled by NO_UI_LAUNCH environment variable")
             return
 
-        proc = await asyncio.create_subprocess_exec(
+        # CRITICAL: Pass THE_CORRECT_PORT to prevent any hardcoded 8000 issues
+        subprocess_args = [
             sys.executable,
             __file__,
             "--ui",
             "--port",
-            str(port),
+            str(THE_CORRECT_PORT)  # This MUST be the same as the main server port
+        ]
+        print(f"🔌 [UI LAUNCHER] Subprocess args: {' '.join(subprocess_args)}")
+        
+        proc = await asyncio.create_subprocess_exec(
+            *subprocess_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=os.getcwd(),
@@ -486,15 +513,22 @@ async def cleanup(app_instance, _loop):
 # UI-only launcher
 # -----------------------------------------------------------------------------
 def launch_ui(port: int, is_subprocess: bool = False):
-    """Launch the desktop UI - uses system browser by default, pywebview if USE_PYTHON_WEBVIEW is set"""
+    """Launch the desktop UI - uses system browser by default, pywebview if USE_PYTHON_WEBVIEW is set
+    
+    CRITICAL: This function MUST receive the correct dynamically allocated port.
+    DO NOT hardcode port 8000 anywhere in this function or its callees.
+    """
+    print(f"[UI] launch_ui called with port={port}, is_subprocess={is_subprocess}")
+    
     # Check if pywebview should be used (when USE_PYTHON_WEBVIEW is set)
     use_webview = os.environ.get('USE_PYTHON_WEBVIEW', '').lower() in ('1', 'true', 'yes')
     
     if not use_webview:
         # Default path: open in system browser
         import webbrowser
+        # CRITICAL: Use the passed port parameter, NOT hardcoded 8000
         url = f"http://localhost:{port}"
-        print(f"[UI] Opening {url} in default system browser")
+        print(f"[UI] Opening {url} in default system browser (NOT hardcoded 8000!)")
         print("[UI] Set USE_PYTHON_WEBVIEW=1 to use pywebview instead")
         
         try:
@@ -608,20 +642,34 @@ def main():
     # Store overmind arguments for passthrough
     app.ctx.overmind_args = unknown_args
     
-    # Dynamic port allocation
+    # ========================================================================
+    # CRITICAL PORT ALLOCATION SECTION - DO NOT BREAK THIS
+    # ========================================================================
+    global ALLOCATED_PORT_DONT_CHANGE
+    
     if args.port is None:
-        port = find_available_port(DEFAULT_PORT)
-        print(f"Auto-allocated port: {port}")
+        # Dynamically find an available port
+        ALLOCATED_PORT_DONT_CHANGE = find_available_port(DEFAULT_PORT_START)
+        print(f"🔌 ALLOCATED PORT: {ALLOCATED_PORT_DONT_CHANGE} (dynamically found)")
     else:
-        port = args.port
+        # Use user-specified port
+        ALLOCATED_PORT_DONT_CHANGE = args.port
+        print(f"🔌 ALLOCATED PORT: {ALLOCATED_PORT_DONT_CHANGE} (user specified)")
+    
+    # VERIFICATION: Double-check we have the right port
+    print(f"🔌 PORT VERIFICATION: ALLOCATED_PORT_DONT_CHANGE = {ALLOCATED_PORT_DONT_CHANGE}")
+    
     if unknown_args:
         print(f"Passing additional arguments to overmind: {' '.join(unknown_args)}")
 
-    app.config.UI_PORT = port
+    # Store in app context (runtime variable, not a config file!)
+    app.ctx.UI_PORT = ALLOCATED_PORT_DONT_CHANGE
+    print(f"🔌 PORT STORED IN APP CONTEXT: {app.ctx.UI_PORT}")
 
     if args.ui:
-        # Running as UI subprocess
-        launch_ui(port, is_subprocess=True)
+        # Running as UI subprocess - MUST use the allocated port
+        print(f"🔌 [UI SUBPROCESS] Using ALLOCATED_PORT_DONT_CHANGE = {ALLOCATED_PORT_DONT_CHANGE}")
+        launch_ui(ALLOCATED_PORT_DONT_CHANGE, is_subprocess=True)
         return 0
 
     # Check for Procfile
@@ -640,20 +688,32 @@ def main():
         print("Please install overmind: brew install overmind")
         print("Continuing anyway - GUI will work but process management will be limited")
 
-    print(f"Starting Overmind GUI (polling-based) on {HOST}:{port}")
+    print(f"Starting Overmind GUI (polling-based) on {HOST}:{ALLOCATED_PORT_DONT_CHANGE}")
 
     if args.no_ui:
-        print(f"UI launch disabled - access the GUI at http://localhost:{port}")
+        print(f"UI launch disabled - access the GUI at http://localhost:{ALLOCATED_PORT_DONT_CHANGE}")
         os.environ['NO_UI_LAUNCH'] = '1'
     else:
         print("UI will launch automatically. Use --no-ui to disable.")
 
     print("Press Ctrl+C to stop")
+    
+    # ========================================================================
+    # FINAL PORT VERIFICATION BEFORE SERVER START
+    # ========================================================================
+    SERVER_PORT = ALLOCATED_PORT_DONT_CHANGE
+    print(f"🔌 FINAL VERIFICATION: Starting server on port {SERVER_PORT}")
+    print(f"🔌 FINAL VERIFICATION: UI will connect to port {SERVER_PORT}")
+    
+    if SERVER_PORT is None:
+        raise RuntimeError("CRITICAL BUG: SERVER_PORT is None!")
+    
+    print(f"🔌 SERVER STARTING ON PORT {SERVER_PORT} (NOT 8000!)")
 
     try:
         app.run(
             host=HOST,
-            port=port,
+            port=SERVER_PORT,  # Use the verified allocated port
             debug=True,
             auto_reload=False,
             workers=1,
@@ -677,14 +737,14 @@ class TestOvermindGui(unittest.TestCase):
 
     def test_default_configuration(self):
         """Test default configuration values"""
-        self.assertEqual(DEFAULT_PORT, 8000)
+        self.assertEqual(DEFAULT_PORT_START, 8000)
         self.assertEqual(HOST, "127.0.0.1")
         
     def test_port_allocation(self):
         """Test dynamic port allocation"""
-        port = find_available_port(8000)
+        port = find_available_port(DEFAULT_PORT_START)
         self.assertIsInstance(port, int)
-        self.assertGreaterEqual(port, 8000)
+        self.assertGreaterEqual(port, DEFAULT_PORT_START)
 
     def test_app_initialization(self):
         """Test that the Sanic app is properly initialized"""

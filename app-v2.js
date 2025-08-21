@@ -4,7 +4,7 @@
  */
 
 // ES Module imports using importmap
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Virtuoso } from 'react-virtuoso';
 
@@ -107,12 +107,19 @@ function OvermindApp() {
     const [filterText, setFilterText] = useState('');
     const [version, setVersion] = useState('');
     
+    // Search-specific state
+    const [searchResults, setSearchResults] = useState([]);
+    const [currentSearchIndex, setCurrentSearchIndex] = useState(-1);
+    const [isSearchActive, setIsSearchActive] = useState(false);
+    
     // Refs
     const virtuosoRef = useRef(null);
     const dataProcessor = useRef(null);
     const pollingManager = useRef(null);
     const stateManager = useRef(null);
     const autoScrollRef = useRef(autoScroll);
+    const searchTimeoutRef = useRef(null);
+    const searchStateRef = useRef({ searchTerm: '', isSearchActive: false });
     
     // Initialize everything
     useEffect(() => {
@@ -125,7 +132,23 @@ function OvermindApp() {
     useEffect(() => {
         console.log('AutoScroll state changed to:', autoScroll);
         autoScrollRef.current = autoScroll;
+        
+        // When autoscroll is re-enabled, trim lines if needed
+        if (autoScroll) {
+            setLines(prevLines => {
+                if (prevLines.length > 5000) {
+                    console.log(`Trimming lines from ${prevLines.length} to 5000 (autoscroll re-enabled)`);
+                    return prevLines.slice(-5000);
+                }
+                return prevLines;
+            });
+        }
     }, [autoScroll]);
+    
+    // Keep search state ref in sync
+    useEffect(() => {
+        searchStateRef.current = { searchTerm, isSearchActive };
+    }, [searchTerm, isSearchActive]);
     
     const fetchVersion = async () => {
         try {
@@ -174,8 +197,27 @@ function OvermindApp() {
             dataProcessor.current.onBatchProcessed = (processedLines) => {
                 setLines(prevLines => {
                     const newLines = [...prevLines, ...processedLines];
-                    // Maintain line limit
-                    return newLines.length > 5000 ? newLines.slice(-5000) : newLines;
+                    
+                    // CRITICAL: Only trim lines when autoscroll is ON
+                    // When autoscroll is OFF, user is likely viewing older content or searching
+                    // Deleting lines would disrupt their view position
+                    let finalLines;
+                    if (autoScrollRef.current && newLines.length > 5000) {
+                        // Autoscroll ON: Safe to trim old lines, user is at bottom
+                        finalLines = newLines.slice(-5000);
+                        console.log('Trimmed lines to 5000 (autoscroll ON)');
+                    } else {
+                        // Autoscroll OFF: Keep all lines to preserve user's view
+                        finalLines = newLines;
+                        if (newLines.length > 5000) {
+                            console.log(`Lines: ${newLines.length} (keeping all - autoscroll OFF)`);
+                        }
+                    }
+                    
+                    // Don't automatically re-run search on new lines to prevent blinking
+                    // Users can manually refresh search by changing search term if needed
+                    
+                    return finalLines;
                 });
                 
                 // If auto-scroll is enabled, ensure we scroll to bottom after adding new lines
@@ -265,8 +307,8 @@ function OvermindApp() {
         }
     };
     
-    // Filter lines based on process selection, search and filter text
-    const filteredLines = lines.filter(line => {
+    // Filter lines based on process selection and filter text (search is handled separately)
+    const filteredLines = useMemo(() => lines.filter(line => {
         // Apply process selection filter
         if (line.processName && processes[line.processName]) {
             const processInfo = processes[line.processName];
@@ -281,22 +323,140 @@ function OvermindApp() {
             return false;
         }
         
-        // Apply search filter  
-        if (searchTerm && !line.cleanText.toLowerCase().includes(searchTerm.toLowerCase())) {
-            return false;
+        return true;
+    }), [lines, processes, filterText]);
+    
+    // Highlight search term in HTML content
+    const highlightSearchTerm = useCallback((htmlContent, term) => {
+        if (!term) return htmlContent;
+        
+        // Create a case-insensitive regex for the search term
+        const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+        return htmlContent.replace(regex, '<mark style="background-color: yellow; color: black;">$1</mark>');
+    }, []);
+    
+    // Search functionality - separate from filtering  
+    const performSearch = useCallback((term, preserveIndex = false) => {
+        console.log(`🔍 performSearch called: term="${term}", preserveIndex=${preserveIndex}`);
+        
+        if (!term) {
+            console.log('🔍 Clearing search results');
+            setSearchResults([]);
+            setCurrentSearchIndex(-1);
+            setIsSearchActive(false);
+            setAutoScroll(true); // Re-enable autoscroll when search is cleared
+            return;
         }
         
-        return true;
-    });
+        // Get current filtered lines at search time to avoid dependency issues
+        const currentFilteredLines = lines.filter(line => {
+            // Apply process selection filter
+            if (line.processName && processes[line.processName]) {
+                const processInfo = processes[line.processName];
+                const isSelected = processInfo?.selected !== false;
+                if (!isSelected) {
+                    return false;
+                }
+            }
+            
+            // Apply text filter
+            if (filterText && !line.cleanText.toLowerCase().includes(filterText.toLowerCase())) {
+                return false;
+            }
+            
+            return true;
+        });
+        
+        const searchLower = term.toLowerCase();
+        const results = [];
+        
+        currentFilteredLines.forEach((line, index) => {
+            if (line.cleanText.toLowerCase().includes(searchLower)) {
+                results.push({
+                    lineIndex: index,
+                    line: line,
+                    highlightedHtml: highlightSearchTerm(line.htmlContent, term)
+                });
+            }
+        });
+        
+        console.log(`🔍 Found ${results.length} search results`);
+        setSearchResults(results);
+        
+        // Only reset index if not preserving or if there are no results
+        if (!preserveIndex || results.length === 0) {
+            console.log(`🔍 Resetting search index to 0 (preserveIndex=${preserveIndex})`);
+            setCurrentSearchIndex(results.length > 0 ? 0 : -1);
+            setIsSearchActive(results.length > 0);
+            
+            // Only disable autoscroll and jump to first result on new searches
+            if (results.length > 0) {
+                setAutoScroll(false);
+                setTimeout(() => {
+                    if (virtuosoRef.current) {
+                        virtuosoRef.current.scrollToIndex({ 
+                            index: results[0].lineIndex, 
+                            behavior: 'smooth',
+                            align: 'center'
+                        });
+                    }
+                }, 50);
+            }
+        } else {
+            // Preserve current index, but ensure it's within bounds
+            console.log(`🔍 Preserving search index`);
+            setCurrentSearchIndex(prevIndex => {
+                const newIndex = Math.min(prevIndex, results.length - 1);
+                const finalIndex = Math.max(0, newIndex);
+                console.log(`🔍 Index preserved: ${prevIndex} → ${finalIndex}`);
+                setIsSearchActive(results.length > 0);
+                return finalIndex;
+            });
+        }
+    }, [lines, processes, filterText, highlightSearchTerm]); // More stable dependencies
+    
+    // Debounced search effect - ONLY depends on searchTerm
+    useEffect(() => {
+        console.log(`🔍 Search term changed to: "${searchTerm}"`);
+        
+        if (searchTimeoutRef.current) {
+            clearTimeout(searchTimeoutRef.current);
+        }
+        
+        searchTimeoutRef.current = setTimeout(() => {
+            console.log(`🔍 Debounced search executing for: "${searchTerm}"`);
+            performSearch(searchTerm, false); // Don't preserve index for new searches
+        }, 300); // 300ms debounce
+        
+        return () => {
+            if (searchTimeoutRef.current) {
+                clearTimeout(searchTimeoutRef.current);
+            }
+        };
+    }, [searchTerm]); // ONLY depend on searchTerm, not performSearch
     
     // Render function for Virtuoso
     const renderLogLine = useCallback((index) => {
         const line = filteredLines[index];
         if (!line) return React.createElement('div', null, 'Loading...');
         
+        // Check if this line has highlighted search results
+        let htmlContent = line.htmlContent;
+        let isCurrentSearchResult = false;
+        
+        if (isSearchActive && searchResults.length > 0) {
+            const searchResult = searchResults.find(result => result.lineIndex === index);
+            if (searchResult) {
+                htmlContent = searchResult.highlightedHtml;
+                // Check if this is the current search result
+                isCurrentSearchResult = searchResults[currentSearchIndex] && 
+                                       searchResults[currentSearchIndex].lineIndex === index;
+            }
+        }
+        
         return React.createElement('div', {
             key: line.id,
-            className: 'output-line',
+            className: `output-line ${isCurrentSearchResult ? 'current-search-result' : ''}`,
             style: {
                 contain: 'content', // Layer 4: CSS contain optimization
                 padding: '1px 8px', // Reduced from 2px to 1px
@@ -304,11 +464,13 @@ function OvermindApp() {
                 fontSize: '14px',
                 lineHeight: '1.2', // Reduced line height
                 whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word'
+                wordBreak: 'break-word',
+                backgroundColor: isCurrentSearchResult ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                border: isCurrentSearchResult ? '1px solid #3b82f6' : 'none'
             },
-            dangerouslySetInnerHTML: { __html: line.htmlContent }
+            dangerouslySetInnerHTML: { __html: htmlContent }
         });
-    }, [filteredLines, searchTerm]);
+    }, [filteredLines, isSearchActive, searchResults, currentSearchIndex]);
     
     // Process list component with selection and controls
     const ProcessList = () => {
@@ -449,6 +611,41 @@ function OvermindApp() {
         setFilterText(e.target.value);
     };
     
+    // Search navigation functions
+    const goToNextSearchResult = () => {
+        if (searchResults.length === 0) return;
+        
+        const nextIndex = (currentSearchIndex + 1) % searchResults.length;
+        console.log(`🔍 Next: ${currentSearchIndex} → ${nextIndex} of ${searchResults.length}`);
+        setCurrentSearchIndex(nextIndex);
+        
+        // Scroll to the next result
+        if (virtuosoRef.current && searchResults[nextIndex]) {
+            virtuosoRef.current.scrollToIndex({
+                index: searchResults[nextIndex].lineIndex,
+                behavior: 'smooth',
+                align: 'center'
+            });
+        }
+    };
+    
+    const goToPrevSearchResult = () => {
+        if (searchResults.length === 0) return;
+        
+        const prevIndex = currentSearchIndex <= 0 ? searchResults.length - 1 : currentSearchIndex - 1;
+        console.log(`🔍 Prev: ${currentSearchIndex} → ${prevIndex} of ${searchResults.length}`);
+        setCurrentSearchIndex(prevIndex);
+        
+        // Scroll to the previous result
+        if (virtuosoRef.current && searchResults[prevIndex]) {
+            virtuosoRef.current.scrollToIndex({
+                index: searchResults[prevIndex].lineIndex,
+                behavior: 'smooth',
+                align: 'center'
+            });
+        }
+    };
+    
     const handleSelectAll = async () => {
         console.log('Select All clicked');
         console.log('Current processes:', processes);
@@ -586,15 +783,79 @@ function OvermindApp() {
                             className: 'filter-input',
                             style: { marginBottom: '0.5rem' }
                         }),
-                        // Search input
-                        React.createElement('input', {
-                            key: 'search',
-                            type: 'text',
-                            placeholder: 'Search output...',
-                            value: searchTerm,
-                            onChange: handleSearchChange,
-                            className: 'filter-input'
-                        })
+                        // Search input container
+                        React.createElement('div', {
+                            key: 'search-container',
+                            style: { position: 'relative', marginBottom: '0.25rem' }
+                        }, [
+                            // Search input
+                            React.createElement('input', {
+                                key: 'search',
+                                type: 'text',
+                                placeholder: 'Search output...',
+                                value: searchTerm,
+                                onChange: handleSearchChange,
+                                className: 'filter-input',
+                                style: { paddingRight: '60px' } // Make room for buttons
+                            }),
+                            // Search navigation buttons
+                            isSearchActive ? React.createElement('div', {
+                                key: 'search-nav',
+                                style: {
+                                    position: 'absolute',
+                                    right: '4px',
+                                    top: '50%',
+                                    transform: 'translateY(-50%)',
+                                    display: 'flex',
+                                    gap: '2px'
+                                }
+                            }, [
+                                React.createElement('button', {
+                                    key: 'prev',
+                                    onClick: goToPrevSearchResult,
+                                    disabled: searchResults.length === 0,
+                                    style: {
+                                        width: '24px',
+                                        height: '24px',
+                                        fontSize: '12px',
+                                        border: '1px solid #ccc',
+                                        backgroundColor: '#f8f9fa',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                    },
+                                    title: 'Previous result'
+                                }, '↑'),
+                                React.createElement('button', {
+                                    key: 'next',
+                                    onClick: goToNextSearchResult,
+                                    disabled: searchResults.length === 0,
+                                    style: {
+                                        width: '24px',
+                                        height: '24px',
+                                        fontSize: '12px',
+                                        border: '1px solid #ccc',
+                                        backgroundColor: '#f8f9fa',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                    },
+                                    title: 'Next result'
+                                }, '↓')
+                            ]) : null
+                        ]),
+                        // Search result counter
+                        isSearchActive ? React.createElement('div', {
+                            key: 'search-info',
+                            style: {
+                                fontSize: '11px',
+                                color: '#6b7280',
+                                marginBottom: '0.5rem'
+                            }
+                        }, searchResults.length === 0 ? 'No results' : 
+                           `${currentSearchIndex + 1} of ${searchResults.length}`) : null
                     ])
                 ]),
                 
