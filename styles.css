@@ -398,6 +398,7 @@ body {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    padding: 15px 10px;
 }
 
 .output-header {
@@ -468,7 +469,7 @@ body {
     font-family: var(--font-mono);
     font-size: 0.875rem;
     line-height: 1.4;
-    padding: var(--spacing-md);
+    padding: 10px var(--spacing-md);
     user-select: text;
     -webkit-user-select: text;
     -moz-user-select: text;
@@ -994,20 +995,6 @@ body {
 }
 
 /* Output line base styles */
-.output-line {
-    /* Layer 4: CSS contain optimization for performance */
-    contain: content;
-    
-    font-family: var(--font-mono);
-    font-size: var(--font-sm);
-    line-height: 1.4;
-    color: var(--text-primary);
-    padding: 1px 0;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-}
-
-/* Search current match highlighting (entire line) */
 .output-line.search-current {
     background-color: rgba(255, 102, 0, 0.1) !important;
     border-left: 3px solid #ff6600;
@@ -1120,3 +1107,4 @@ body {
     /* Ensure ANSI color spans don't interfere with search highlighting */
     position: relative;
 }
+

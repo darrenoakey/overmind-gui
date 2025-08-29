@@ -451,6 +451,12 @@ async def setup(app_instance, loop):
     app_instance.ctx.tasks.extend([t1, t2])
 
 
+@app.listener("after_server_start")
+async def launch_ui(_app, _loop):
+    await asyncio.sleep(0.2)  # tiny grace so routes are live
+    subprocess.Popen(["open", "/Applications/Overmind.app"])
+
+
 @app.before_server_stop
 async def cleanup(app_instance, _loop):
     """Clean up remaining resources - overmind should already be stopped by message chain"""
