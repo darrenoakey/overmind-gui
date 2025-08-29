@@ -3,9 +3,73 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Overmind GUI</title>
+    <title>Overmind GUI - High Performance</title>
     <link rel="stylesheet" href="/styles.css">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+    <style>
+        /* Additional performance optimizations for virtualized list */
+        .virtual-list-container {
+            /* GPU acceleration for smooth scrolling */
+            transform: translateZ(0);
+            will-change: scroll-position;
+        }
+        
+        .virtual-list-item {
+            /* Isolate paint and layout for each item */
+            contain: layout style paint;
+            
+            /* Optimize text rendering */
+            text-rendering: optimizeSpeed;
+            
+            /* Minimize reflows */
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+        }
+        
+        /* Process indicator optimization */
+        .process-indicator {
+            contain: layout style;
+            flex-shrink: 0;
+        }
+        
+        /* Search highlight optimization */
+        .search-highlight {
+            contain: paint;
+            background: rgba(255, 255, 0, 0.3);
+            border-radius: 2px;
+            padding: 0 1px;
+        }
+        
+        /* Loading spinner optimization */
+        .loading-spinner {
+            will-change: transform;
+        }
+        
+        /* Performance hint for modals */
+        .modal {
+            contain: layout style;
+        }
+        
+        /* Optimize scrollbars */
+        .virtual-list-container::-webkit-scrollbar {
+            width: 12px;
+        }
+        
+        .virtual-list-container::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+            border-radius: 6px;
+        }
+        
+        .virtual-list-container::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 6px;
+            border: 2px solid var(--bg-secondary);
+        }
+        
+        .virtual-list-container::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+    </style>
 </head>
 <body>
     <div id="app">
@@ -14,7 +78,7 @@
             <div class="header-content">
                 <div class="logo">
                     <span class="logo-icon">⚡</span>
-                    <h1 id="app-title">Overmind GUI v<span id="version-number">1</span></h1>
+                    <h1 id="app-title">Overmind GUI v<span id="version-number">2.0</span> <sup style="color: var(--success-color); font-size: 0.6em;">HIGH-PERF</sup></h1>
                     <div class="polling-indicator">
                         <span id="polling-status" class="polling-dot"></span>
                         <span class="polling-text">Live</span>
@@ -38,6 +102,11 @@
                         <span class="status-label">Processes:</span>
                         <span id="process-count" class="status-value">0</span>
                     </div>
+                    <div class="status-item">
+                        <button id="shutdown-btn" class="btn btn-danger" title="Shutdown Overmind and close server">
+                            🔴 Shutdown
+                        </button>
+                    </div>
                 </div>
             </div>
         </header>
@@ -46,60 +115,92 @@
         <div class="main-content">
             <!-- Sidebar -->
             <aside class="sidebar">
-
                 <div class="sidebar-section compact">
-                    <h4>Filter</h4>
-                    <input type="text" id="filter-input" placeholder="Filter output..." class="filter-input">
-                </div>
-
-                <div class="sidebar-section compact">
-                    <h4>Search</h4>
-                    <div class="search-input-group">
-                        <input type="text" id="search-input" placeholder="Search output..." class="search-input">
-                        <button id="search-up-btn" class="btn btn-nav" title="Previous match">▲</button>
-                        <button id="search-down-btn" class="btn btn-nav" title="Next match">▼</button>
-                    </div>
-                    <div class="search-results">
-                        <span id="search-results-text"></span>
-                    </div>
-                </div>
-
-                <div class="sidebar-section">
-                    <div class="processes-header">
-                        <h3>Processes</h3>
-                        <div class="process-quick-controls">
-                            <button id="select-all-btn" class="btn btn-tiny" title="Select All">All</button>
-                            <button id="deselect-all-btn" class="btn btn-tiny" title="Deselect All">None</button>
+                    <div class="section-header">
+                        <h3>Controls</h3>
+                        <div class="section-actions">
+                            <button id="select-all-btn" class="action-btn" title="Select All">All</button>
+                            <button id="deselect-all-btn" class="action-btn" title="Deselect All">None</button>
                         </div>
                     </div>
-                    <div id="process-list" class="process-list">
-                        <!-- Processes will be populated here -->
+                    <div class="section-content">
+                        <!-- Filter controls -->
+                        <div class="input-group">
+                            <input 
+                                type="text" 
+                                id="filter-input" 
+                                class="filter-input" 
+                                placeholder="Filter output..."
+                            >
+                        </div>
+                        
+                        <!-- Search controls -->
+                        <div class="search-group">
+                            <input 
+                                type="text" 
+                                id="search-input" 
+                                class="filter-input" 
+                                placeholder="Search output..."
+                            >
+                            <div class="search-nav">
+                                <button id="search-up-btn" class="search-nav-btn" title="Previous match">↑</button>
+                                <span id="search-results-text" class="search-results"></span>
+                                <button id="search-down-btn" class="search-nav-btn" title="Next match">↓</button>
+                            </div>
+                        </div>
+                        
+                        <!-- Action buttons -->
+                        <div class="action-buttons">
+                            <button id="clear-output-btn" class="btn btn-secondary">
+                                Clear Output
+                            </button>
+                        </div>
                     </div>
                 </div>
 
+                <!-- Process list -->
+                <div class="sidebar-section">
+                    <div class="section-header">
+                        <h3>Processes</h3>
+                    </div>
+                    <div class="section-content">
+                        <div id="process-list" class="process-list">
+                            <!-- Processes will be populated dynamically -->
+                        </div>
+                    </div>
+                </div>
             </aside>
 
             <!-- Output panel -->
             <main class="output-panel">
-                <div id="output-container" class="output-container">
-                    <div id="output-lines" class="output-lines">
-                        <!-- Output lines will be populated here -->
+                <div class="output-header">
+                    <div class="output-title">
+                        <h2>Output</h2>
+                        <div class="performance-indicator">
+                            <span id="perf-stats" class="perf-text">Virtual: Ready</span>
+                        </div>
                     </div>
-                    
-                    <!-- Floating auto-scroll button (only visible when auto-scroll is off) -->
-                    <button id="auto-scroll-btn" class="auto-scroll-btn" title="Enable auto-scroll">
-                        ↓ Scroll to Bottom
-                    </button>
+                </div>
+
+                <!-- Virtual list container - this is where the magic happens -->
+                <div id="output-container" class="output-container">
+                    <!-- Virtual list content will be rendered here -->
                 </div>
             </main>
         </div>
     </div>
 
+    <!-- Auto-scroll button (floating) -->
+    <button id="auto-scroll-btn" class="auto-scroll-btn" title="Scroll to bottom">
+        ↓ New Output
+    </button>
+
     <!-- Loading overlay -->
     <div id="loading-overlay" class="loading-overlay">
         <div class="loading-content">
             <div class="loading-spinner"></div>
-            <p>Loading Overmind GUI...</p>
+            <p>Initializing High-Performance GUI...</p>
+            <small>Loading Web Worker and Virtual List...</small>
         </div>
     </div>
 
@@ -116,10 +217,36 @@
         </div>
     </div>
 
-    <!-- Scripts -->
-    <script src="/utils.js"></script>
-    <script src="/polling.js"></script>
-    <script src="/ui.js"></script>
-    <script src="/init.js"></script>
+    <!-- Import Map for ES Module dependencies -->
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom": "https://esm.sh/react-dom@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "react-virtuoso": "https://esm.sh/react-virtuoso@4?deps=react@18.2.0,react-dom@18.2.0"
+        }
+    }
+    </script>
+    
+    <!-- High-Performance Architecture Scripts as ES Modules -->
+    <!-- Layer 1: Web Worker (loaded dynamically) -->
+    <!-- Layer 4: Main Application with React Virtuoso and ES Modules -->
+    <script type="module" src="/app.js"></script>
+    
+    <script>
+        // Performance monitoring
+        window.addEventListener('load', () => {
+            console.log('🚀 High-Performance Overmind GUI Loaded');
+            console.log('📊 Architecture: Worker + RAF Batching + Virtual List + CSS Contain');
+            
+            // Log performance metrics after initialization
+            setTimeout(() => {
+                if (window.overmindApp) {
+                    console.log('📈 Performance Stats:', window.overmindApp.getPerformanceStats());
+                }
+            }, 2000);
+        });
+    </script>
 </body>
 </html>

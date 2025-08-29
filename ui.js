@@ -78,6 +78,7 @@ class UIManager {
             // Control buttons (in processes header)
             selectAllBtn: document.getElementById('select-all-btn'),
             deselectAllBtn: document.getElementById('deselect-all-btn'),
+            shutdownBtn: document.getElementById('shutdown-btn'),
             
             // Filter elements (separate from search)
             filterInput: document.getElementById('filter-input'),
@@ -112,6 +113,7 @@ class UIManager {
         // Control buttons (in processes header)
         this.elements.selectAllBtn.addEventListener('click', () => this.selectAllProcesses());
         this.elements.deselectAllBtn.addEventListener('click', () => this.deselectAllProcesses());
+        this.elements.shutdownBtn.addEventListener('click', () => this.shutdownOvermind());
         
         // Filter input - debounced, no button
         const debouncedFilter = this.debounce((value) => this.applyFilter(value), 300);
@@ -190,6 +192,61 @@ class UIManager {
             this.elements.autoScrollBtn.style.display = 'block';
             this.elements.autoscrollIndicator.textContent = 'OFF';
             this.elements.autoscrollIndicator.className = 'status-value autoscroll-off';
+        }
+    }
+    
+    /**
+     * Shutdown Overmind and close server
+     */
+    async shutdownOvermind() {
+        try {
+            // Disable the button and show loading state
+            this.elements.shutdownBtn.disabled = true;
+            this.elements.shutdownBtn.innerHTML = '<span class="spinner"></span> Shutting down...';
+            
+            console.log('Initiating shutdown...');
+            
+            // Call the shutdown API
+            const response = await fetch('/api/shutdown', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok && result.success) {
+                console.log('Shutdown successful:', result.message);
+                
+                // Show success message briefly
+                this.elements.shutdownBtn.innerHTML = '✓ Shutdown Complete';
+                
+                // Update UI to show shutdown state
+                this.showLoading('System shutting down...');
+                
+                // The server will close the connection, so we don't need to do anything else
+                setTimeout(() => {
+                    this.hideLoading();
+                }, 2000);
+                
+            } else {
+                throw new Error(result.error || `Server returned ${response.status}`);
+            }
+            
+        } catch (error) {
+            console.error('Shutdown failed:', error);
+            
+            // Reset button and show error
+            this.elements.shutdownBtn.disabled = false;
+            this.elements.shutdownBtn.innerHTML = '⚠ Shutdown';
+            
+            this.showError(`Failed to shutdown: ${error.message}`, error);
+            
+            // Reset button text after a delay
+            setTimeout(() => {
+                this.elements.shutdownBtn.innerHTML = '⚠ Shutdown';
+            }, 3000);
         }
     }
     
@@ -287,7 +344,7 @@ class UIManager {
             
             if (this.isSearchActive) {
                 // Use simple text-based highlighting since we don't need ANSI preservation for search
-                const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+                const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')})`, 'gi');
                 const highlightedHtml = originalHtml.replace(regex, '<mark class="search-highlight">$1</mark>');
                 // Only update innerHTML if it's actually different
                 if (lineElement.innerHTML !== highlightedHtml) {
@@ -663,7 +720,7 @@ class UIManager {
         if (this.isSearchActive && this.elements.searchInput.value.trim()) {
             const searchTerm = this.elements.searchInput.value.trim();
             if (line.text.toLowerCase().includes(searchTerm.toLowerCase())) {
-                const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+                const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')})`, 'gi');
                 lineElement.innerHTML = line.text.replace(regex, '<mark class="search-highlight">$1</mark>');
             }
         }

@@ -21,10 +21,10 @@ def setup_static_routes(app: Sanic):
     async def index(_request):
         """Serve the high-performance HTML page"""
         try:
-            return await file(os.path.join(script_dir, "index-v2.html"),
+            return await file(os.path.join(script_dir, "index.html"),
                              mime_type="text/html")
         except FileNotFoundError as exc:
-            raise NotFound("index-v2.html not found") from exc
+            raise NotFound("index.html not found") from exc
     
     # Legacy route for old version (if needed for debugging)
     @app.route("/v1", name="index_v1")
@@ -127,16 +127,6 @@ def setup_static_routes(app: Sanic):
                        content_type="application/javascript", status=404)
 
     # High-performance architecture files
-    @app.route("/app-v2.js", name="app_v2_js")
-    async def app_v2_js(_request):
-        """Serve high-performance app JavaScript file"""
-        try:
-            return await file(os.path.join(script_dir, "app-v2.js"),
-                             mime_type="application/javascript")
-        except FileNotFoundError:
-            return text("// app-v2.js file not found",
-                       content_type="application/javascript", status=404)
-    
     @app.route("/state-manager.js", name="state_manager_js")
     async def state_manager_js(_request):
         """Serve state manager JavaScript file"""

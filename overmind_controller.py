@@ -437,6 +437,22 @@ class OvermindController:  # pylint: disable=too-many-instance-attributes
         except (OSError, subprocess.SubprocessError) as e:
             print(f"Failed to restart {process_name}: {e}")
             return False
+    async def quit(self) -> bool:
+        """Execute overmind quit command to gracefully shutdown all processes"""
+        try:
+            env = self.get_colored_env()
+            process = await asyncio.create_subprocess_exec(
+                "overmind", "quit",
+                cwd=self.working_directory,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env
+            )
+            await process.wait()
+            return process.returncode == 0
+        except (OSError, subprocess.SubprocessError) as e:
+            print(f"Failed to quit overmind: {e}")
+            return False
 
     async def get_status(self) -> Optional[str]:
         """Get current status of all processes"""

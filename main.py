@@ -24,7 +24,7 @@ import traceback
 import inspect
 import socket
 
-from sanic import Sanic
+from sanic import Sanic, response
 
 # Import our modules
 from process_manager import ProcessManager
@@ -176,6 +176,17 @@ async def shutdown_message_chain(app_instance):
 setup_static_routes(app)
 setup_api_routes(app)
 
+
+# Shutdown endpoint to stop the server
+@app.route("/shutdown", methods=["POST"])
+async def shutdown_server(request):
+    """Shutdown the Sanic server"""
+    try:
+        # Schedule server stop
+        request.app.add_task(lambda: request.app.stop())
+        return response.json({"success": True, "message": "Server shutdown initiated"})
+    except Exception as e:
+        return response.json({"error": str(e)}, status=500)
 
 # -----------------------------------------------------------------------------
 # Background task callbacks for update queue

@@ -294,3 +294,29 @@ class TestApiRoutes(unittest.TestCase):
     def test_setup_api_routes(self):
         """Test setup_api_routes function exists"""
         self.assertTrue(callable(setup_api_routes))
+
+
+@api_bp.route("/shutdown", methods=["POST"])
+async def shutdown_overmind(request: Request) -> HTTPResponse:
+    """Initiate overmind quit and system shutdown sequence"""
+    try:
+        if not hasattr(request.app.ctx, "overmind_controller") or not request.app.ctx.overmind_controller:
+            return response.json({"error": "Overmind controller not available"}, status=503)
+        
+        # Execute overmind quit command
+        success = await request.app.ctx.overmind_controller.quit()
+        
+        if success:
+            return response.json({
+                "success": True, 
+                "message": "Overmind quit command executed successfully"
+            })
+        else:
+            return response.json({
+                "success": False, 
+                "error": "Failed to execute overmind quit"
+            }, status=500)
+            
+    except Exception as e:
+        return response.json({"error": str(e)}, status=500)
+
