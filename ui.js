@@ -148,6 +148,11 @@ class UIManager {
                 this.autoScroll = false;
                 this.updateAutoScrollButton();
                 console.log('Auto-scroll disabled by user scrolling up');
+            } else if (!this.autoScroll && isAtBottom) {
+                // User scrolled back to bottom - enable auto-scroll
+                this.autoScroll = true;
+                this.updateAutoScrollButton();
+                console.log('Auto-scroll enabled by user scrolling to bottom');
             }
         });
         
