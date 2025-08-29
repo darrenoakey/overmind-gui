@@ -1,6 +1,6 @@
 """
-API Routes - Polling-based endpoints to replace WebSocket functionality
-Provides endpoints for process management and polling updates
+API Routes - Message-based polling endpoints with incremental IDs
+Provides endpoints for process management and polling updates using message IDs
 """
 
 import json
@@ -55,6 +55,9 @@ async def get_current_state(request: Request) -> HTTPResponse:
         state['overmind_status'] = overmind_status
         state['version'] = getattr(request.app.ctx, 'version', 1)
         
+        # Add queue stats
+        state['queue_stats'] = update_queue.get_stats()
+        
         return response.json(state)
         
     except Exception as e:
@@ -63,34 +66,36 @@ async def get_current_state(request: Request) -> HTTPResponse:
 
 @api_bp.route("/poll", methods=["GET"])
 async def poll_updates(request: Request) -> HTTPResponse:
-    """Poll for updates since last timestamp"""
+    """Poll for updates since last message ID"""
     try:
-        # Get since timestamp from query parameter
-        since_str = request.args.get('since')
-        since_timestamp = None
+        # Get last message ID from query parameter
+        last_id_str = request.args.get('last_message_id', '0')
         
-        if since_str:
-            try:
-                since_timestamp = float(since_str)
-            except (ValueError, TypeError):
-                return response.json({"error": "Invalid since timestamp"}, status=400)
+        try:
+            last_message_id = int(last_id_str)
+        except (ValueError, TypeError):
+            return response.json({"error": "Invalid last_message_id - must be integer"}, status=400)
         
-        # Poll for updates - NEW OPTIMIZED FORMAT
-        response_package, current_timestamp = update_queue.poll_updates(since_timestamp)
+        if last_message_id < 0:
+            return response.json({"error": "last_message_id must be >= 0"}, status=400)
+        
+        # Poll for updates - NEW MESSAGE-BASED FORMAT
+        response_package, latest_message_id = update_queue.poll_updates(last_message_id)
         
         # Add current stats
         stats = {}
         if hasattr(request.app.ctx, 'process_manager'):
             stats = request.app.ctx.process_manager.get_stats()
         
-        # Build final response with new optimized structure
+        # Build final response with new message-based structure
         return response.json({
             "output_lines": response_package['output_lines'],
             "status_updates": response_package['status_updates'],
             "total_lines": response_package['total_lines'],
             "other_updates": response_package['other_updates'],
-            "timestamp": current_timestamp,
-            "stats": stats
+            "latest_message_id": latest_message_id,  # Changed from timestamp
+            "stats": stats,
+            "queue_stats": update_queue.get_stats()
         })
         
     except Exception as e:
@@ -233,13 +238,14 @@ async def clear_output(request: Request) -> HTTPResponse:
         if hasattr(request.app.ctx, 'process_manager'):
             request.app.ctx.process_manager.clear_all_output()
         
-        return response.json({"success": True, "message": "Output cleared"})
+        return response.json({
+            "success": True, 
+            "message": "Output cleared",
+            "latest_message_id": update_queue.message_counter
+        })
         
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
-
-
-# Search functionality removed - frontend handles filtering now
 
 
 @api_bp.route("/status", methods=["GET"])
@@ -250,7 +256,8 @@ async def get_status(request: Request) -> HTTPResponse:
             "overmind_running": False,
             "process_count": 0,
             "line_count": 0,
-            "uptime": 0
+            "uptime": 0,
+            "latest_message_id": update_queue.message_counter
         }
         
         if hasattr(request.app.ctx, 'overmind_controller') and request.app.ctx.overmind_controller:
@@ -260,7 +267,10 @@ async def get_status(request: Request) -> HTTPResponse:
             stats = request.app.ctx.process_manager.get_stats()
             status_info["process_count"] = stats.get("total", 0)
         
-        status_info["line_count"] = 0  # Frontend manages line count now
+        # Add queue stats
+        queue_stats = update_queue.get_stats()
+        status_info["message_count"] = queue_stats["total_messages"]
+        status_info["line_count"] = queue_stats["total_lines"]
         
         return response.json(status_info)
         

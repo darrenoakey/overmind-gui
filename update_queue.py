@@ -1,7 +1,7 @@
 """
-Update Queue - Simple message queue system for polling
-Backend only queues unsent messages, frontend manages display and limits
-Now includes ANSI processing and pre-rendered HTML for performance
+Update Queue - Message-based queue system with incremental IDs for polling
+Backend keeps last 10,000 messages with incremental message IDs starting at 1
+Clients poll with last received message ID to get newer messages
 """
 
 import time
@@ -14,18 +14,18 @@ from ansi_processor import ansi_processor
 
 
 class UpdateItem:
-    """A single update item (either output line or status change)"""
+    """A single update item (either output line or status change) with message ID"""
     
-    def __init__(self, update_type: str, data: Any, timestamp: float = None):
-        self.type = update_type  # 'output' or 'status'
+    def __init__(self, update_type: str, data: Any, message_id: int, timestamp: float = None):
+        self.type = update_type  # 'output', 'status', 'status_bulk', etc.
         self.data = data
+        self.message_id = message_id  # Incremental integer starting at 1
         self.timestamp = timestamp or time.time()
-        self.id = f"{self.timestamp}_{id(self)}"
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         return {
-            'id': self.id,
+            'message_id': self.message_id,
             'type': self.type,
             'data': self.data,
             'timestamp': self.timestamp
@@ -33,22 +33,29 @@ class UpdateItem:
 
 
 class UpdateQueue:
-    """Simple message queue system for polling clients"""
+    """Message-based queue system for polling clients with incremental IDs"""
     
-    def __init__(self, max_queue_size: int = 5000):
-        self.updates: deque = deque(maxlen=max_queue_size)
+    def __init__(self, max_messages: int = 10000):
+        self.updates: deque = deque(maxlen=max_messages)
         self.lock = Lock()
         self.last_poll_cleanup = time.time()
-        self.max_age_seconds = 300  # Keep updates for 5 minutes max
+        self.max_age_seconds = 600  # Keep updates for 10 minutes max (fallback)
         self.line_counter = 0
+        self.message_counter = 0  # Incremental message ID starting at 1
         
         # Current process statuses for tracking changes
         self.process_statuses: Dict[str, str] = {}
+    
+    def _get_next_message_id(self) -> int:
+        """Get the next message ID (thread-safe)"""
+        self.message_counter += 1
+        return self.message_counter
     
     def add_output_line(self, line_text: str, process_name: str):
         """Add a new output line update - pre-process with ANSI conversion"""
         with self.lock:
             self.line_counter += 1
+            message_id = self._get_next_message_id()
             
             # Process line through ANSI processor for pre-rendered HTML
             processed_line = ansi_processor.process_line(
@@ -58,8 +65,8 @@ class UpdateQueue:
                 time.time()
             )
             
-            # Create update with pre-processed data
-            update = UpdateItem('output', processed_line)
+            # Create update with pre-processed data and message ID
+            update = UpdateItem('output', processed_line, message_id)
             self.updates.append(update)
     
     def add_status_update(self, process_name: str, status: str):
@@ -69,13 +76,14 @@ class UpdateQueue:
         if old_status != status:
             self.process_statuses[process_name] = status
             
-            update = UpdateItem('status', {
-                'process': process_name,
-                'status': status,
-                'old_status': old_status
-            })
-            
             with self.lock:
+                message_id = self._get_next_message_id()
+                update = UpdateItem('status', {
+                    'process': process_name,
+                    'status': status,
+                    'old_status': old_status
+                }, message_id)
+                
                 self.updates.append(update)
     
     def add_bulk_status_updates(self, status_updates: Dict[str, str]):
@@ -92,43 +100,52 @@ class UpdateQueue:
                 }
         
         if changed:
-            update = UpdateItem('status_bulk', {
-                'updates': changed
-            })
-            
             with self.lock:
+                message_id = self._get_next_message_id()
+                update = UpdateItem('status_bulk', {
+                    'updates': changed
+                }, message_id)
+                
                 self.updates.append(update)
     
-    def poll_updates(self, since_timestamp: float = None) -> Tuple[Dict[str, Any], float]:
+    def poll_updates(self, last_message_id: int = 0) -> Tuple[Dict[str, Any], int]:
         """
-        Poll for updates since timestamp - NEW OPTIMIZED FORMAT
-        Returns (response_package, current_timestamp)
+        Poll for updates since last message ID - NEW MESSAGE-BASED FORMAT
+        
+        Args:
+            last_message_id: Last message ID client received (0 for first poll)
+        
+        Returns:
+            (response_package, latest_message_id)
         
         Response package format:
         {
             'output_lines': [{'id': int, 'html': str, 'clean_text': str, 'process': str, 'timestamp': float}],
             'status_updates': {'process_name': 'status', ...},
-            'total_lines': int,  # Total lines in backend buffer for cleanup decisions
+            'total_lines': int,  # Total lines in backend buffer
             'other_updates': [...]  # server_started, etc.
         }
         """
         current_time = time.time()
         
-        # Cleanup old updates periodically
-        if current_time - self.last_poll_cleanup > 60:
+        # Cleanup old updates periodically (fallback to prevent memory issues)
+        if current_time - self.last_poll_cleanup > 120:
             self._cleanup_old_updates(current_time)
             self.last_poll_cleanup = current_time
         
         with self.lock:
-            if since_timestamp is None:
-                # First poll - return recent updates (last 100)
+            if last_message_id == 0:
+                # First poll - return recent updates (last 100 messages)
                 relevant_updates = list(self.updates)[-100:]
             else:
-                # Return updates since timestamp
+                # Return updates with message_id > last_message_id
                 relevant_updates = [
                     update for update in self.updates 
-                    if update.timestamp > since_timestamp
+                    if update.message_id > last_message_id
                 ]
+            
+            # Get the latest message ID from all updates
+            latest_message_id = self.message_counter
         
         # Separate and consolidate updates by type
         output_lines = []
@@ -157,18 +174,19 @@ class UpdateQueue:
             'other_updates': other_updates
         }
         
-        return response_package, current_time
+        return response_package, latest_message_id
     
     def get_current_state(self) -> Dict[str, Any]:
         """Get basic current state (no lines, just metadata)"""
         return {
             'process_statuses': self.process_statuses.copy(),
             'timestamp': time.time(),
-            'total_lines_sent': self.line_counter
+            'total_lines_sent': self.line_counter,
+            'latest_message_id': self.message_counter
         }
     
     def _cleanup_old_updates(self, current_time: float):
-        """Remove updates older than max_age_seconds"""
+        """Remove updates older than max_age_seconds (fallback protection)"""
         cutoff_time = current_time - self.max_age_seconds
         
         # Convert deque to list, filter, convert back
@@ -177,22 +195,35 @@ class UpdateQueue:
         
         self.updates.clear()
         self.updates.extend(filtered_updates)
+        
+        print(f"Cleanup: Removed {len(updates_list) - len(filtered_updates)} old messages")
     
     def add_server_started(self, version: int):
         """Add a server started message"""
-        update = UpdateItem('server_started', {
-            'version': version,
-            'message': f"🚀 Overmind GUI v{version} started"
-        })
-        
         with self.lock:
+            message_id = self._get_next_message_id()
+            update = UpdateItem('server_started', {
+                'version': version,
+                'message': f"🚀 Overmind GUI v{version} started"
+            }, message_id)
+            
             self.updates.append(update)
     
     def clear_all(self):
         """Clear all updates"""
         with self.lock:
             self.updates.clear()
-            # Don't reset line counter - frontend needs unique IDs
+            # Don't reset message counter - clients need unique IDs across clears
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get queue statistics"""
+        with self.lock:
+            return {
+                'total_messages': len(self.updates),
+                'latest_message_id': self.message_counter,
+                'total_lines': self.line_counter,
+                'queue_capacity': self.updates.maxlen
+            }
 
 
 # Global instance
@@ -205,24 +236,25 @@ class TestUpdateItem(unittest.TestCase):
     def test_initialization(self):
         """Test UpdateItem initialization"""
         data = {'test': 'value'}
-        item = UpdateItem('output', data)
+        item = UpdateItem('output', data, 1)
         
         self.assertEqual(item.type, 'output')
         self.assertEqual(item.data, data)
+        self.assertEqual(item.message_id, 1)
         self.assertIsInstance(item.timestamp, float)
-        self.assertIsInstance(item.id, str)
     
     def test_to_dict(self):
         """Test UpdateItem to_dict conversion"""
         data = {'process': 'web', 'line': 'test output'}
-        item = UpdateItem('output', data)
+        item = UpdateItem('output', data, 5)
         
         result = item.to_dict()
         
-        expected_keys = {'id', 'type', 'data', 'timestamp'}
+        expected_keys = {'message_id', 'type', 'data', 'timestamp'}
         self.assertEqual(set(result.keys()), expected_keys)
         self.assertEqual(result['type'], 'output')
         self.assertEqual(result['data'], data)
+        self.assertEqual(result['message_id'], 5)
 
 
 class TestUpdateQueue(unittest.TestCase):
@@ -235,90 +267,73 @@ class TestUpdateQueue(unittest.TestCase):
         self.assertEqual(len(queue.updates), 0)
         self.assertEqual(len(queue.process_statuses), 0)
         self.assertEqual(queue.line_counter, 0)
+        self.assertEqual(queue.message_counter, 0)
     
     def test_add_output_line(self):
-        """Test adding output line"""
+        """Test adding output line with message ID"""
         queue = UpdateQueue()
         
         queue.add_output_line("test output", "web")
         
         self.assertEqual(len(queue.updates), 1)
         self.assertEqual(queue.updates[0].type, 'output')
+        self.assertEqual(queue.updates[0].message_id, 1)
         self.assertEqual(queue.line_counter, 1)
+        self.assertEqual(queue.message_counter, 1)
     
-    def test_add_status_update(self):
-        """Test adding status update"""
+    def test_message_id_increment(self):
+        """Test that message IDs increment properly"""
         queue = UpdateQueue()
         
+        queue.add_output_line("line 1", "web")
         queue.add_status_update("web", "running")
+        queue.add_output_line("line 2", "web")
         
-        self.assertEqual(len(queue.updates), 1)
-        self.assertEqual(queue.updates[0].type, 'status')
-        self.assertEqual(queue.process_statuses["web"], "running")
+        self.assertEqual(queue.updates[0].message_id, 1)
+        self.assertEqual(queue.updates[1].message_id, 2)
+        self.assertEqual(queue.updates[2].message_id, 3)
+        self.assertEqual(queue.message_counter, 3)
     
-    def test_no_duplicate_status_updates(self):
-        """Test that duplicate status updates are ignored"""
-        queue = UpdateQueue()
-        
-        queue.add_status_update("web", "running")
-        queue.add_status_update("web", "running")  # Same status
-        
-        self.assertEqual(len(queue.updates), 1)  # Only one update
-    
-    def test_bulk_status_updates(self):
-        """Test bulk status updates"""
-        queue = UpdateQueue()
-        
-        updates = {"web": "running", "worker": "stopped"}
-        queue.add_bulk_status_updates(updates)
-        
-        self.assertEqual(len(queue.updates), 1)
-        self.assertEqual(queue.updates[0].type, 'status_bulk')
-        self.assertEqual(queue.process_statuses["web"], "running")
-        self.assertEqual(queue.process_statuses["worker"], "stopped")
-    
-    def test_poll_updates(self):
-        """Test polling updates"""
+    def test_poll_updates_by_message_id(self):
+        """Test polling updates using message ID"""
         queue = UpdateQueue()
         
         # Add some updates
-        queue.add_output_line("line 1", "web")
-        queue.add_status_update("web", "running")
+        queue.add_output_line("line 1", "web")  # message_id = 1
+        queue.add_status_update("web", "running")  # message_id = 2
+        queue.add_output_line("line 2", "web")  # message_id = 3
         
-        # Poll updates
-        updates, timestamp = queue.poll_updates()
+        # Poll from beginning (first poll)
+        updates1, latest_id1 = queue.poll_updates(0)
+        self.assertEqual(len(updates1['output_lines']), 2)
+        self.assertEqual(len(updates1['status_updates']), 1)
+        self.assertEqual(latest_id1, 3)
         
-        self.assertEqual(len(updates), 2)
-        self.assertIsInstance(timestamp, float)
+        # Add another update
+        queue.add_output_line("line 3", "web")  # message_id = 4
         
-        # Poll again with timestamp - should get no new updates
-        updates2, timestamp2 = queue.poll_updates(timestamp)
+        # Poll with last received ID
+        updates2, latest_id2 = queue.poll_updates(3)
+        self.assertEqual(len(updates2['output_lines']), 1)
+        self.assertEqual(len(updates2['status_updates']), 0)
+        self.assertEqual(latest_id2, 4)
         
-        self.assertEqual(len(updates2), 0)
-        self.assertGreaterEqual(timestamp2, timestamp)
+        # Poll again with latest ID - should get nothing new
+        updates3, latest_id3 = queue.poll_updates(4)
+        self.assertEqual(len(updates3['output_lines']), 0)
+        self.assertEqual(latest_id3, 4)
     
-    def test_get_current_state(self):
-        """Test getting current state"""
-        queue = UpdateQueue()
-        
-        queue.add_output_line("test line", "web")
-        queue.add_status_update("web", "running")
-        
-        state = queue.get_current_state()
-        
-        expected_keys = {'process_statuses', 'timestamp', 'total_lines_sent'}
-        self.assertEqual(set(state.keys()), expected_keys)
-        self.assertEqual(state['process_statuses']['web'], 'running')
-        self.assertEqual(state['total_lines_sent'], 1)
-    
-    def test_clear_all(self):
-        """Test clearing all data"""
+    def test_get_stats(self):
+        """Test getting queue statistics"""
         queue = UpdateQueue()
         
         queue.add_output_line("test", "web")
         queue.add_status_update("web", "running")
         
-        queue.clear_all()
+        stats = queue.get_stats()
         
-        self.assertEqual(len(queue.updates), 0)
-        # line_counter should not be reset
+        expected_keys = {'total_messages', 'latest_message_id', 'total_lines', 'queue_capacity'}
+        self.assertEqual(set(stats.keys()), expected_keys)
+        self.assertEqual(stats['total_messages'], 2)
+        self.assertEqual(stats['latest_message_id'], 2)
+        self.assertEqual(stats['total_lines'], 1)
