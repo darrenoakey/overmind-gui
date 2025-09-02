@@ -148,8 +148,16 @@ async def shutdown_message_chain(app_instance):
         # Message 2: Overmind stopped → Stop Sanic
         print("\n📨 [MESSAGE 2] Overmind stopped → Stopping Sanic server...")
         try:
-            app_instance.stop()
-            print("✅ [MESSAGE 2] Sanic server shutdown initiated")
+            # Instead of calling app_instance.stop() directly, we need to signal the server
+            # to stop from outside the current async context to avoid deadlock
+            import os
+            import signal
+            
+            # Get the current process ID and send SIGINT to trigger graceful shutdown
+            current_pid = os.getpid()
+            print(f"📤 [MESSAGE 2] Sending SIGINT to main process PID {current_pid}")
+            os.kill(current_pid, signal.SIGINT)
+            print("✅ [MESSAGE 2] Sanic server shutdown signal sent")
         except Exception as e:
             print(f"❌ [MESSAGE 2] Error stopping Sanic server: {e}")
             import traceback
