@@ -331,6 +331,32 @@ function OvermindApp() {
         return result;
     }, [processLines, processes, filterText]);
     
+    // Track the previous line count to detect dramatic content changes
+    const prevLineCount = useRef(0);
+    
+    // Handle dramatic content changes (e.g., switching between high/low volume processes)
+    useEffect(() => {
+        const currentCount = filteredLines.length;
+        const prevCount = prevLineCount.current;
+        
+        // Detect dramatic changes (more than 10x difference)
+        const isDramaticChange = currentCount > 0 && prevCount > 0 && 
+            (currentCount > prevCount * 10 || prevCount > currentCount * 10);
+        
+        if (isDramaticChange && virtuosoRef.current) {
+            console.log(`Dramatic content change detected: ${prevCount} → ${currentCount} lines`);
+            
+            // Force to bottom if autoscroll is on, or stay roughly in the same relative position
+            setTimeout(() => {
+                if (autoScroll && virtuosoRef.current) {
+                    virtuosoRef.current.scrollToIndex({ index: 'LAST', behavior: 'auto' });
+                }
+            }, 0);
+        }
+        
+        prevLineCount.current = currentCount;
+    }, [filteredLines.length, autoScroll]);
+    
     // Highlight search term in HTML content
     const highlightSearchTerm = useCallback((htmlContent, term) => {
         if (!term) return htmlContent;
@@ -982,7 +1008,12 @@ function OvermindApp() {
                         itemContent: renderLogLine,
                         style: { height: '100%' },
                         followOutput: autoScroll ? 'smooth' : false,
+                        alignToBottom: autoScroll,
                         atBottomThreshold: 200,
+                        scrollSeekConfiguration: {
+                            enter: velocity => Math.abs(velocity) > 200,
+                            exit: velocity => Math.abs(velocity) < 30,
+                        },
                         onAtBottomStateChange: (atBottom) => {
                             // Only handle bottom state changes from manual scrolling, not programmatic
                             if (isManualScrolling.current) {
