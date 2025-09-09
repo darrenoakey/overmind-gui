@@ -156,6 +156,16 @@ def setup_static_routes(app: Sanic):
         except FileNotFoundError:
             return text("// data-processor.worker.js file not found",
                        content_type="application/javascript", status=404)
+    
+    @app.route("/constants.js", name="constants_js")
+    async def constants_js(_request):
+        """Serve constants JavaScript file"""
+        try:
+            return await file(os.path.join(script_dir, "constants.js"),
+                             mime_type="application/javascript")
+        except FileNotFoundError:
+            return text("// constants.js file not found",
+                       content_type="application/javascript", status=404)
 
     @app.route("/favicon.ico")
     async def favicon(_request):

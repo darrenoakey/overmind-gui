@@ -7,6 +7,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Virtuoso } from 'react-virtuoso';
+import { MAX_LINES_PER_PROCESS, MAX_DISPLAY_LINES } from './constants.js';
 
 // React and React Virtuoso imports successful
 
@@ -96,8 +97,8 @@ class DataProcessor {
 
 // Main React App Component
 function OvermindApp() {
-    // State
-    const [lines, setLines] = useState([]);
+    // State - using per-process circular buffers instead of single array
+    const [processLines, setProcessLines] = useState({}); // { processName: [line1, line2, ...] }
     const [processes, setProcesses] = useState({});
     const [stats, setStats] = useState({});
     const [isConnected, setIsConnected] = useState(false);
@@ -194,28 +195,40 @@ function OvermindApp() {
             // Load initial process list
             await loadProcessList();
             
-            // Set up data processor callback
+            // Set up data processor callback - now maintains per-process circular buffers
             dataProcessor.current.onBatchProcessed = (processedLines) => {
-                setLines(prevLines => {
-                    const newLines = [...prevLines, ...processedLines];
+                setProcessLines(prevProcessLines => {
+                    const newProcessLines = { ...prevProcessLines };
                     
-                    // CRITICAL: Only trim lines when autoscroll is ON
-                    // When autoscroll is OFF, user is likely viewing older content or searching
-                    // Deleting lines would disrupt their view position
-                    let finalLines;
-                    if (autoScrollRef.current && newLines.length > 5000) {
-                        // Autoscroll ON: Safe to trim old lines, user is at bottom
-                        finalLines = newLines.slice(-5000);
-                        console.log('Trimmed lines to 5000 (autoscroll ON)');
-                    } else {
-                        // Autoscroll OFF: Keep all lines to preserve user's view
-                        finalLines = newLines;
-                        if (newLines.length > 5000) {
-                            console.log(`Lines: ${newLines.length} (keeping all - autoscroll OFF)`);
+                    // Group incoming lines by process
+                    const linesByProcess = {};
+                    processedLines.forEach(line => {
+                        const processName = line.processName || 'unknown';
+                        if (!linesByProcess[processName]) {
+                            linesByProcess[processName] = [];
                         }
-                    }
+                        linesByProcess[processName].push(line);
+                    });
                     
-                    return finalLines;
+                    // Update each process's circular buffer
+                    Object.entries(linesByProcess).forEach(([processName, newLines]) => {
+                        if (!newProcessLines[processName]) {
+                            newProcessLines[processName] = [];
+                        }
+                        
+                        // Add new lines to the process buffer
+                        const updatedBuffer = [...newProcessLines[processName], ...newLines];
+                        
+                        // Trim to MAX_LINES_PER_PROCESS (circular buffer)
+                        if (updatedBuffer.length > MAX_LINES_PER_PROCESS) {
+                            newProcessLines[processName] = updatedBuffer.slice(-MAX_LINES_PER_PROCESS);
+                            console.log(`Process ${processName}: trimmed to ${MAX_LINES_PER_PROCESS} lines`);
+                        } else {
+                            newProcessLines[processName] = updatedBuffer;
+                        }
+                    });
+                    
+                    return newProcessLines;
                 });
             };
             
@@ -297,24 +310,37 @@ function OvermindApp() {
         }
     };
     
-    // Filter lines based on process selection and filter text (search is handled separately)
-    const filteredLines = useMemo(() => lines.filter(line => {
-        // Apply process selection filter
-        if (line.processName && processes[line.processName]) {
-            const processInfo = processes[line.processName];
+    // Build filtered lines from selected processes, sorted by ID, limited to MAX_DISPLAY_LINES
+    const filteredLines = useMemo(() => {
+        // Step 1: Collect lines from all selected processes
+        const selectedLines = [];
+        
+        Object.entries(processLines).forEach(([processName, lines]) => {
+            const processInfo = processes[processName];
             const isSelected = processInfo?.selected !== false;
-            if (!isSelected) {
-                return false; // Hide lines from deselected processes
+            
+            if (isSelected && lines && lines.length > 0) {
+                // Add all lines from this selected process
+                lines.forEach(line => {
+                    // Apply text filter
+                    if (!filterText || line.htmlContent.toLowerCase().includes(filterText.toLowerCase())) {
+                        selectedLines.push(line);
+                    }
+                });
             }
-        }
+        });
         
-        // Apply text filter
-        if (filterText && !line.htmlContent.toLowerCase().includes(filterText.toLowerCase())) {
-            return false;
-        }
+        // Step 2: Sort by ID to maintain chronological order
+        selectedLines.sort((a, b) => a.id - b.id);
         
-        return true;
-    }), [lines, processes, filterText]);
+        // Step 3: Take the last MAX_DISPLAY_LINES (most recent)
+        const result = selectedLines.length > MAX_DISPLAY_LINES ? 
+            selectedLines.slice(-MAX_DISPLAY_LINES) : 
+            selectedLines;
+            
+        console.log(`Display: ${result.length} lines from ${Object.keys(processLines).length} total processes`);
+        return result;
+    }, [processLines, processes, filterText]);
     
     // Highlight search term in HTML content
     const highlightSearchTerm = useCallback((htmlContent, term) => {
@@ -339,28 +365,33 @@ function OvermindApp() {
         }
         
         // Get current filtered lines at search time to avoid dependency issues
-        const currentFilteredLines = lines.filter(line => {
-            // Apply process selection filter
-            if (line.processName && processes[line.processName]) {
-                const processInfo = processes[line.processName];
-                const isSelected = processInfo?.selected !== false;
-                if (!isSelected) {
-                    return false;
-                }
-            }
+        const currentFilteredLines = [];
+        
+        Object.entries(processLines).forEach(([processName, lines]) => {
+            const processInfo = processes[processName];
+            const isSelected = processInfo?.selected !== false;
             
-            // Apply text filter
-            if (filterText && !line.htmlContent.toLowerCase().includes(filterText.toLowerCase())) {
-                return false;
+            if (isSelected && lines && lines.length > 0) {
+                lines.forEach(line => {
+                    if (!filterText || line.htmlContent.toLowerCase().includes(filterText.toLowerCase())) {
+                        currentFilteredLines.push(line);
+                    }
+                });
             }
-            
-            return true;
         });
+        
+        // Sort by ID to maintain chronological order
+        currentFilteredLines.sort((a, b) => a.id - b.id);
+        
+        // Take the last MAX_DISPLAY_LINES (most recent)
+        const finalFilteredLines = currentFilteredLines.length > MAX_DISPLAY_LINES ? 
+            currentFilteredLines.slice(-MAX_DISPLAY_LINES) : 
+            currentFilteredLines;
         
         const searchLower = term.toLowerCase();
         const results = [];
         
-        currentFilteredLines.forEach((line, index) => {
+        finalFilteredLines.forEach((line, index) => {
             if (line.htmlContent.toLowerCase().includes(searchLower)) {
                 results.push({
                     lineIndex: index,
@@ -403,7 +434,7 @@ function OvermindApp() {
                 return finalIndex;
             });
         }
-    }, [lines, processes, filterText, highlightSearchTerm]); // More stable dependencies
+    }, [processLines, processes, filterText, highlightSearchTerm]); // More stable dependencies
     
     // Debounced search effect - ONLY depends on searchTerm
     useEffect(() => {
@@ -768,7 +799,9 @@ function OvermindApp() {
                 React.createElement('div', { className: 'status-bar' }, [
                     React.createElement('div', { key: 'lines', className: 'status-item' }, [
                         React.createElement('span', { key: 'label' }, 'Lines: '),
-                        React.createElement('span', { key: 'value' }, lines.length)
+                        React.createElement('span', { key: 'value' }, 
+                            Object.values(processLines).reduce((total, processBuffer) => total + (processBuffer?.length || 0), 0)
+                        )
                     ]),
                     React.createElement('div', { key: 'autoscroll', className: 'status-item' }, [
                         React.createElement('span', { key: 'label' }, 'Autoscroll: '),
