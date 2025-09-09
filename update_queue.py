@@ -38,8 +38,6 @@ class UpdateQueue:
     def __init__(self, max_messages: int = 10000):
         self.updates: deque = deque(maxlen=max_messages)
         self.lock = Lock()
-        self.last_poll_cleanup = time.time()
-        self.max_age_seconds = 600  # Keep updates for 10 minutes max (fallback)
         self.line_counter = 0
         self.message_counter = 0  # Incremental message ID starting at 1
         
@@ -128,10 +126,6 @@ class UpdateQueue:
         """
         current_time = time.time()
         
-        # Cleanup old updates periodically (fallback to prevent memory issues)
-        if current_time - self.last_poll_cleanup > 120:
-            self._cleanup_old_updates(current_time)
-            self.last_poll_cleanup = current_time
         
         with self.lock:
             if last_message_id == 0:
@@ -185,18 +179,6 @@ class UpdateQueue:
             'latest_message_id': self.message_counter
         }
     
-    def _cleanup_old_updates(self, current_time: float):
-        """Remove updates older than max_age_seconds (fallback protection)"""
-        cutoff_time = current_time - self.max_age_seconds
-        
-        # Convert deque to list, filter, convert back
-        updates_list = list(self.updates)
-        filtered_updates = [u for u in updates_list if u.timestamp > cutoff_time]
-        
-        self.updates.clear()
-        self.updates.extend(filtered_updates)
-        
-        print(f"Cleanup: Removed {len(updates_list) - len(filtered_updates)} old messages")
     
     def add_server_started(self, version: int):
         """Add a server started message"""
