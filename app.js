@@ -301,6 +301,7 @@ function OvermindApp() {
     
     // Stable reference for filteredLines when autoscroll is OFF
     const stableFilteredLines = useRef([]);
+    const lastProcessSelection = useRef('');
     
     // Build filtered lines from selected processes, sorted by ID, limited to MAX_DISPLAY_LINES
     const filteredLines = useMemo(() => {
@@ -330,44 +331,27 @@ function OvermindApp() {
             selectedLines.slice(-MAX_DISPLAY_LINES) : 
             selectedLines;
         
-        // CRITICAL: When autoscroll is OFF, only update display if process selection or filter changed
-        if (!autoScroll && stableFilteredLines.current.length > 0) {
-            // Check if this change is due to process selection or filter change (allowed)
-            // vs new lines being added to existing processes (should be blocked)
-            const currentSelectedProcesses = Object.entries(processes)
-                .filter(([_, processInfo]) => processInfo?.selected !== false)
-                .map(([name, _]) => name)
-                .sort()
-                .join(',');
-            
-            const storedKey = stableFilteredLines.current._selectionKey;
-            const newKey = `${currentSelectedProcesses}-${filterText}`;
-            
-            if (storedKey === newKey) {
-                // Same selection/filter - don't update (new lines from processes)
-                console.log(`Autoscroll OFF: keeping stable display (${stableFilteredLines.current.length} lines)`);
+        // Track process selection changes
+        const currentProcessSelection = Object.entries(processes)
+            .filter(([_, processInfo]) => processInfo?.selected !== false)
+            .map(([name, _]) => name)
+            .sort()
+            .join(',');
+        
+        // CRITICAL: When autoscroll is OFF, only update if process selection changed
+        if (!autoScroll) {
+            if (stableFilteredLines.current.length > 0 && lastProcessSelection.current === currentProcessSelection) {
+                console.log(`Autoscroll OFF: keeping frozen display (${stableFilteredLines.current.length} lines)`);
                 return stableFilteredLines.current;
-            } else {
-                // Selection/filter changed - update display
-                const result = { ...newResult, _selectionKey: newKey };
-                stableFilteredLines.current = result;
-                console.log(`Autoscroll OFF but selection changed: updating display (${newResult.length} lines)`);
-                return newResult;
             }
-        } else {
-            // Autoscroll ON or first time - update display and store as stable reference
-            const result = { 
-                ...newResult, 
-                _selectionKey: `${Object.entries(processes)
-                    .filter(([_, processInfo]) => processInfo?.selected !== false)
-                    .map(([name, _]) => name)
-                    .sort()
-                    .join(',')}-${filterText}`
-            };
-            stableFilteredLines.current = result;
-            console.log(`Display updated: ${newResult.length} lines from ${Object.keys(processLines).length} total processes`);
-            return newResult;
+            console.log(`Autoscroll OFF but process selection changed - updating display`);
         }
+        
+        // Update display and references
+        stableFilteredLines.current = newResult;
+        lastProcessSelection.current = currentProcessSelection;
+        console.log(`Display updated: ${newResult.length} lines from ${Object.keys(processLines).length} total processes`);
+        return newResult;
     }, [processLines, processes, filterText, autoScroll]);
     
     

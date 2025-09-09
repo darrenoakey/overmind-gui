@@ -7,7 +7,7 @@ class PollingManager {
     constructor() {
         this.isPolling = false;
         this.pollInterval = null;
-        this.lastTimestamp = null;
+        this.lastMessageId = 0;
         this.pollFrequency = 1000; // Once per second
         this.errorRetryDelay = 2000; // 2 seconds
         this.maxRetries = 5;
@@ -65,9 +65,9 @@ class PollingManager {
         const startTime = performance.now();
         
         try {
-            const url = this.lastTimestamp 
-                ? `/api/poll?since=${this.lastTimestamp}`
-                : '/api/poll';
+            const url = this.lastMessageId 
+                ? `/api/poll?last_message_id=${this.lastMessageId}`
+                : '/api/poll?last_message_id=0';
             
             const response = await fetch(url);
             
@@ -78,7 +78,7 @@ class PollingManager {
             const data = await response.json();
             
             // Update timestamp
-            this.lastTimestamp = data.timestamp;
+            this.lastMessageId = data.latest_message_id;
             
             // Update stats
             this.stats = data.stats || {};
@@ -366,7 +366,7 @@ class PollingManager {
             const data = await response.json();
             
             // Update timestamp for future polls
-            this.lastTimestamp = data.timestamp;
+            this.lastMessageId = data.latest_message_id;
             
             // Update stats
             this.stats = data.stats || {};
