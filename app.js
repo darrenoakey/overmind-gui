@@ -299,6 +299,9 @@ function OvermindApp() {
         }
     };
     
+    // Stable reference for filteredLines when autoscroll is OFF
+    const stableFilteredLines = useRef([]);
+    
     // Build filtered lines from selected processes, sorted by ID, limited to MAX_DISPLAY_LINES
     const filteredLines = useMemo(() => {
         // Step 1: Collect lines from all selected processes
@@ -323,39 +326,50 @@ function OvermindApp() {
         selectedLines.sort((a, b) => a.id - b.id);
         
         // Step 3: Take the last MAX_DISPLAY_LINES (most recent)
-        const result = selectedLines.length > MAX_DISPLAY_LINES ? 
+        const newResult = selectedLines.length > MAX_DISPLAY_LINES ? 
             selectedLines.slice(-MAX_DISPLAY_LINES) : 
             selectedLines;
-            
-        console.log(`Display: ${result.length} lines from ${Object.keys(processLines).length} total processes`);
-        return result;
-    }, [processLines, processes, filterText]);
-    
-    // Track the previous line count to detect dramatic content changes
-    const prevLineCount = useRef(0);
-    
-    // Handle dramatic content changes (e.g., switching between high/low volume processes)
-    useEffect(() => {
-        const currentCount = filteredLines.length;
-        const prevCount = prevLineCount.current;
         
-        // Detect dramatic changes (more than 10x difference)
-        const isDramaticChange = currentCount > 0 && prevCount > 0 && 
-            (currentCount > prevCount * 10 || prevCount > currentCount * 10);
-        
-        if (isDramaticChange && virtuosoRef.current) {
-            console.log(`Dramatic content change detected: ${prevCount} → ${currentCount} lines`);
+        // CRITICAL: When autoscroll is OFF, only update display if process selection or filter changed
+        if (!autoScroll && stableFilteredLines.current.length > 0) {
+            // Check if this change is due to process selection or filter change (allowed)
+            // vs new lines being added to existing processes (should be blocked)
+            const currentSelectedProcesses = Object.entries(processes)
+                .filter(([_, processInfo]) => processInfo?.selected !== false)
+                .map(([name, _]) => name)
+                .sort()
+                .join(',');
             
-            // Force to bottom if autoscroll is on, or stay roughly in the same relative position
-            setTimeout(() => {
-                if (autoScroll && virtuosoRef.current) {
-                    virtuosoRef.current.scrollToIndex({ index: 'LAST', behavior: 'auto' });
-                }
-            }, 0);
+            const storedKey = stableFilteredLines.current._selectionKey;
+            const newKey = `${currentSelectedProcesses}-${filterText}`;
+            
+            if (storedKey === newKey) {
+                // Same selection/filter - don't update (new lines from processes)
+                console.log(`Autoscroll OFF: keeping stable display (${stableFilteredLines.current.length} lines)`);
+                return stableFilteredLines.current;
+            } else {
+                // Selection/filter changed - update display
+                const result = { ...newResult, _selectionKey: newKey };
+                stableFilteredLines.current = result;
+                console.log(`Autoscroll OFF but selection changed: updating display (${newResult.length} lines)`);
+                return newResult;
+            }
+        } else {
+            // Autoscroll ON or first time - update display and store as stable reference
+            const result = { 
+                ...newResult, 
+                _selectionKey: `${Object.entries(processes)
+                    .filter(([_, processInfo]) => processInfo?.selected !== false)
+                    .map(([name, _]) => name)
+                    .sort()
+                    .join(',')}-${filterText}`
+            };
+            stableFilteredLines.current = result;
+            console.log(`Display updated: ${newResult.length} lines from ${Object.keys(processLines).length} total processes`);
+            return newResult;
         }
-        
-        prevLineCount.current = currentCount;
-    }, [filteredLines.length, autoScroll]);
+    }, [processLines, processes, filterText, autoScroll]);
+    
     
     // Highlight search term in HTML content
     const highlightSearchTerm = useCallback((htmlContent, term) => {
@@ -432,7 +446,7 @@ function OvermindApp() {
                     if (virtuosoRef.current) {
                         virtuosoRef.current.scrollToIndex({ 
                             index: results[0].lineIndex, 
-                            behavior: 'smooth',
+                            behavior: 'auto',
                             align: 'center'
                         });
                     }
@@ -659,7 +673,7 @@ function OvermindApp() {
         if (virtuosoRef.current && searchResults[nextIndex]) {
             virtuosoRef.current.scrollToIndex({
                 index: searchResults[nextIndex].lineIndex,
-                behavior: 'smooth',
+                behavior: 'auto',
                 align: 'center'
             });
         }
@@ -676,7 +690,7 @@ function OvermindApp() {
         if (virtuosoRef.current && searchResults[prevIndex]) {
             virtuosoRef.current.scrollToIndex({
                 index: searchResults[prevIndex].lineIndex,
-                behavior: 'smooth',
+                behavior: 'auto',
                 align: 'center'
             });
         }
@@ -782,7 +796,7 @@ function OvermindApp() {
                 console.log('Scrolling to bottom with LAST index');
                 virtuosoRef.current.scrollToIndex({ 
                     index: 'LAST',
-                    behavior: 'smooth'
+                    behavior: 'auto'
                 });
             }, 50);
         }
@@ -1007,13 +1021,8 @@ function OvermindApp() {
                         totalCount: filteredLines.length,
                         itemContent: renderLogLine,
                         style: { height: '100%' },
-                        followOutput: autoScroll ? 'smooth' : false,
-                        alignToBottom: autoScroll,
+                        followOutput: autoScroll,
                         atBottomThreshold: 200,
-                        scrollSeekConfiguration: {
-                            enter: velocity => Math.abs(velocity) > 200,
-                            exit: velocity => Math.abs(velocity) < 30,
-                        },
                         onAtBottomStateChange: (atBottom) => {
                             // Only handle bottom state changes from manual scrolling, not programmatic
                             if (isManualScrolling.current) {
