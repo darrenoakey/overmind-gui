@@ -3,6 +3,7 @@ API Routes - Message-based polling endpoints with incremental IDs
 Provides endpoints for process management and polling updates using message IDs
 """
 
+import asyncio
 import json
 import re
 import time
@@ -303,17 +304,22 @@ async def shutdown_overmind(request: Request) -> HTTPResponse:
         if not hasattr(request.app.ctx, "overmind_controller") or not request.app.ctx.overmind_controller:
             return response.json({"error": "Overmind controller not available"}, status=503)
         
-        # Execute overmind quit command
+        # Execute overmind quit command and wait for it to complete
         success = await request.app.ctx.overmind_controller.quit()
         
         if success:
-            # After successful Overmind shutdown, also shutdown Sanic server
-            # Use add_task to avoid blocking the response
-            request.app.add_task(request.app.stop)
+            # Overmind has fully shut down, now trigger Sanic shutdown
+            # Schedule Sanic shutdown after sending response
+            async def delayed_sanic_shutdown():
+                # Small delay to ensure response is sent
+                await asyncio.sleep(0.5)
+                request.app.stop()
+            
+            request.app.add_task(delayed_sanic_shutdown())
             
             return response.json({
                 "success": True, 
-                "message": "Overmind quit command executed successfully, server shutting down"
+                "message": "Overmind quit completed successfully, server shutting down"
             })
         else:
             return response.json({
