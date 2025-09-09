@@ -2,9 +2,10 @@
 
 const { useState, useEffect, useRef, useCallback } = React;
 
-// Component to render HTML safely with ANSI codes and search highlighting
-const AnsiText = ({ children, searchTerm }) => {
-    const html = window.AnsiUtils.ansiToHtml(children);
+// Component to render pre-processed HTML from backend with search highlighting
+const AnsiText = ({ lineData, searchTerm }) => {
+    // Use pre-rendered HTML from backend
+    const html = lineData?.html || lineData || '';
     const highlightedHtml = window.AnsiUtils.highlightSearchInHtml(html, searchTerm);
     return React.createElement('span', { 
         dangerouslySetInnerHTML: { __html: highlightedHtml } 
@@ -193,8 +194,9 @@ const OutputDisplay = ({
                     className: lineClassName
                 },
                     React.createElement(AnsiText, { 
+                        lineData: line,
                         searchTerm: searchTerm
-                    }, line)
+                    })
                 );
             })
         ),

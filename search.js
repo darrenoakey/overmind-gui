@@ -26,8 +26,8 @@ class SearchManager {
         const searchLower = searchText.toLowerCase();
         
         filteredOutput.forEach((line, index) => {
-            // Search in clean text without ANSI codes
-            const cleanLine = window.AnsiUtils.stripAnsiCodes(line);
+            // Use pre-processed clean text from backend
+            const cleanLine = line.cleanText || line.clean_text || line;
             if (cleanLine.toLowerCase().includes(searchLower)) {
                 results.push(index);
             }

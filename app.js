@@ -120,9 +120,7 @@ function OvermindApp() {
     const autoScrollRef = useRef(autoScroll);
     const searchTimeoutRef = useRef(null);
     const searchStateRef = useRef({ searchTerm: '', isSearchActive: false });
-    const preservedScrollState = useRef(null);
     const isManualScrolling = useRef(false);
-    const ignoreScrollEvents = useRef(false);
     
     // Initialize everything
     useEffect(() => {
@@ -198,25 +196,6 @@ function OvermindApp() {
             
             // Set up data processor callback
             dataProcessor.current.onBatchProcessed = (processedLines) => {
-                // Store scroll position before updating lines if autoscroll is OFF
-                let scrollPosition = null;
-                if (!autoScrollRef.current && virtuosoRef.current) {
-                    try {
-                        // Get current scroll state from Virtuoso
-                        const scrollElement = virtuosoRef.current.scrollTo ? 
-                            document.querySelector('[data-virtuoso-scroller]') : null;
-                        if (scrollElement) {
-                            scrollPosition = {
-                                scrollTop: scrollElement.scrollTop,
-                                scrollHeight: scrollElement.scrollHeight,
-                                clientHeight: scrollElement.clientHeight
-                            };
-                        }
-                    } catch (error) {
-                        console.warn('Could not capture scroll position:', error);
-                    }
-                }
-                
                 setLines(prevLines => {
                     const newLines = [...prevLines, ...processedLines];
                     
@@ -236,46 +215,8 @@ function OvermindApp() {
                         }
                     }
                     
-                    // Store the scroll position for restoration after update
-                    if (scrollPosition && !autoScrollRef.current) {
-                        preservedScrollState.current = scrollPosition;
-                    }
-                    
                     return finalLines;
                 });
-                
-                // Handle scrolling after state update
-                setTimeout(() => {
-                    if (autoScrollRef.current && virtuosoRef.current) {
-                        // Auto-scroll to bottom when autoscroll is ON
-                        console.log('Auto-scrolling to bottom after new lines added');
-                        ignoreScrollEvents.current = true;
-                        virtuosoRef.current.scrollToIndex({ index: 'LAST', behavior: 'auto' });
-                        setTimeout(() => { ignoreScrollEvents.current = false; }, 100);
-                    } else if (preservedScrollState.current && virtuosoRef.current) {
-                        // Restore scroll position when autoscroll is OFF
-                        try {
-                            const scrollElement = document.querySelector('[data-virtuoso-scroller]');
-                            if (scrollElement && preservedScrollState.current) {
-                                const { scrollTop, scrollHeight } = preservedScrollState.current;
-                                const newScrollHeight = scrollElement.scrollHeight;
-                                
-                                // Calculate new scroll position accounting for added content
-                                const heightDiff = newScrollHeight - scrollHeight;
-                                const newScrollTop = Math.max(0, scrollTop + heightDiff);
-                                
-                                console.log(`Restoring scroll position: ${scrollTop} -> ${newScrollTop} (height diff: ${heightDiff})`);
-                                
-                                ignoreScrollEvents.current = true;
-                                scrollElement.scrollTop = newScrollTop;
-                                setTimeout(() => { ignoreScrollEvents.current = false; }, 100);
-                            }
-                        } catch (error) {
-                            console.warn('Could not restore scroll position:', error);
-                        }
-                        preservedScrollState.current = null;
-                    }
-                }, 10);
             };
             
             // Layer 2: Initialize state manager
@@ -443,13 +384,11 @@ function OvermindApp() {
                 setAutoScroll(false);
                 setTimeout(() => {
                     if (virtuosoRef.current) {
-                        ignoreScrollEvents.current = true;
                         virtuosoRef.current.scrollToIndex({ 
                             index: results[0].lineIndex, 
                             behavior: 'smooth',
                             align: 'center'
                         });
-                        setTimeout(() => { ignoreScrollEvents.current = false; }, 200);
                     }
                 }, 50);
             }
@@ -672,13 +611,11 @@ function OvermindApp() {
         
         // Scroll to the next result
         if (virtuosoRef.current && searchResults[nextIndex]) {
-            ignoreScrollEvents.current = true;
             virtuosoRef.current.scrollToIndex({
                 index: searchResults[nextIndex].lineIndex,
                 behavior: 'smooth',
                 align: 'center'
             });
-            setTimeout(() => { ignoreScrollEvents.current = false; }, 200);
         }
     };
     
@@ -691,13 +628,11 @@ function OvermindApp() {
         
         // Scroll to the previous result
         if (virtuosoRef.current && searchResults[prevIndex]) {
-            ignoreScrollEvents.current = true;
             virtuosoRef.current.scrollToIndex({
                 index: searchResults[prevIndex].lineIndex,
                 behavior: 'smooth',
                 align: 'center'
             });
-            setTimeout(() => { ignoreScrollEvents.current = false; }, 200);
         }
     };
     
@@ -799,12 +734,10 @@ function OvermindApp() {
             // Force scroll to bottom using LAST index
             setTimeout(() => {
                 console.log('Scrolling to bottom with LAST index');
-                ignoreScrollEvents.current = true;
                 virtuosoRef.current.scrollToIndex({ 
                     index: 'LAST',
                     behavior: 'smooth'
                 });
-                setTimeout(() => { ignoreScrollEvents.current = false; }, 200);
             }, 50);
         }
     };
@@ -1011,17 +944,14 @@ function OvermindApp() {
                     className: 'output-container',
                     style: { flex: 1 },
                     onWheel: (e) => {
-                        // Only handle wheel events if they're not being ignored and are manual
-                        if (!ignoreScrollEvents.current) {
-                            isManualScrolling.current = true;
-                            // Immediately disable auto-scroll on any wheel scroll up
-                            if (e.deltaY < 0 && autoScroll) { // deltaY < 0 means scrolling up
-                                console.log('Manual mouse wheel scroll up detected, disabling autoScroll');
-                                setAutoScroll(false);
-                            }
-                            // Reset the manual scrolling flag after a short delay
-                            setTimeout(() => { isManualScrolling.current = false; }, 150);
+                        isManualScrolling.current = true;
+                        // Immediately disable auto-scroll on any wheel scroll up
+                        if (e.deltaY < 0 && autoScroll) { // deltaY < 0 means scrolling up
+                            console.log('Manual mouse wheel scroll up detected, disabling autoScroll');
+                            setAutoScroll(false);
                         }
+                        // Reset the manual scrolling flag after a short delay
+                        setTimeout(() => { isManualScrolling.current = false; }, 150);
                     }
                 },
                     React.createElement(Virtuoso, {
@@ -1030,9 +960,10 @@ function OvermindApp() {
                         itemContent: renderLogLine,
                         style: { height: '100%' },
                         followOutput: autoScroll ? 'smooth' : false,
+                        atBottomThreshold: 200,
                         onAtBottomStateChange: (atBottom) => {
                             // Only handle bottom state changes from manual scrolling, not programmatic
-                            if (!ignoreScrollEvents.current && isManualScrolling.current) {
+                            if (isManualScrolling.current) {
                                 console.log('Manual scroll - at bottom state changed:', atBottom, 'autoScroll:', autoScroll);
                                 if (!atBottom && autoScroll) {
                                     console.log('Disabling autoscroll due to manual scroll away from bottom');
@@ -1041,8 +972,6 @@ function OvermindApp() {
                                     console.log('Re-enabling autoscroll due to manual scroll to bottom');
                                     setAutoScroll(true);
                                 }
-                            } else {
-                                console.log('Ignoring bottom state change (programmatic scroll or ignored events)');
                             }
                         }
                     })
