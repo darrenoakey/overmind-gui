@@ -59,8 +59,7 @@ class UpdateQueue:
             processed_line = ansi_processor.process_line(
                 line_text, 
                 self.line_counter, 
-                process_name, 
-                time.time()
+                process_name
             )
             
             # Create update with pre-processed data and message ID
@@ -118,7 +117,7 @@ class UpdateQueue:
         
         Response package format:
         {
-            'output_lines': [{'id': int, 'html': str, 'clean_text': str, 'process': str, 'timestamp': float}],
+            'output_lines': [{'id': int, 'html': str, 'process': str}],
             'status_updates': {'process_name': 'status', ...},
             'total_lines': int,  # Total lines in backend buffer
             'other_updates': [...]  # server_started, etc.

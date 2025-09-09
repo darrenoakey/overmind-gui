@@ -218,11 +218,8 @@ class ANSIProcessor:
         """Strip ANSI codes for searching"""
         return self.ansi_regex.sub('', text)
     
-    def process_line(self, line_text: str, line_id: int, process_name: str, timestamp: float) -> Dict:
-        """Process a single line and return pre-rendered data"""
-        # Strip ANSI for clean text (used for searching/filtering)
-        clean_text = self.strip_ansi_codes(line_text)
-        
+    def process_line(self, line_text: str, line_id: int, process_name: str) -> Dict:
+        """Process a single line and return only HTML representation"""
         # First escape any existing HTML characters in the raw text (before ANSI processing)
         import html
         escaped_text = html.escape(line_text, quote=False)
@@ -232,13 +229,327 @@ class ANSIProcessor:
         
         return {
             'id': line_id,
-            'text': line_text,  # Original with ANSI codes
-            'clean_text': clean_text,  # For search/filter
-            'html': html_content,  # Pre-rendered HTML
-            'process': process_name,
-            'timestamp': timestamp
+            'html': html_content,  # Only HTML representation - used for display and search
+            'process': process_name
         }
 
 
 # Global instance
 ansi_processor = ANSIProcessor()
+
+
+# Comprehensive Unit Tests
+import unittest
+import time
+
+
+class TestANSIProcessor(unittest.TestCase):
+    """Comprehensive test suite for ANSI processing"""
+    
+    def setUp(self):
+        """Set up test processor"""
+        self.processor = ANSIProcessor()
+    
+    def test_basic_color_processing(self):
+        """Test basic 8/16 color ANSI codes"""
+        # Red text
+        text = "\x1b[31mRed text\x1b[0m"
+        result = self.processor.ansi_to_html(text)
+        self.assertIn('color:', result)
+        self.assertIn('Red text', result)
+        self.assertIn('<span', result)
+        self.assertIn('</span>', result)
+        
+        # Green text
+        text = "\x1b[32mGreen text\x1b[0m"
+        result = self.processor.ansi_to_html(text)
+        self.assertIn('color:', result)
+        self.assertIn('Green text', result)
+        
+        # Bold red text
+        text = "\x1b[1;31mBold red text\x1b[0m"
+        result = self.processor.ansi_to_html(text)
+        self.assertIn('color:', result)
+        self.assertIn('font-weight: bold', result)
+        self.assertIn('Bold red text', result)
+    
+    def test_256_color_processing(self):
+        """Test 256-color ANSI sequences"""
+        # 256-color foreground
+        text = "\x1b[38;5;196mBright red\x1b[0m"  # Color 196 is bright red
+        result = self.processor.ansi_to_html(text)
+        self.assertIn('color:', result)
+        self.assertIn('Bright red', result)
+        
+        # 256-color background (should be applied)
+        text = "\x1b[48;5;21mBlue background\x1b[0m"  # Color 21 is blue
+        result = self.processor.ansi_to_html(text)
+        self.assertIn('Blue background', result)
+        # Background colors should be applied
+        self.assertIn('background-color:', result)
+    
+    def test_process_name_colors(self):
+        """Test that process names maintain their colors and bold formatting"""
+        # Test with typical overmind process name format
+        text = "\x1b[1;36mweb\x1b[0m     | Starting server..."
+        result = self.processor.ansi_to_html(text)
+        
+        # Should have both bold and color
+        self.assertIn('font-weight: bold', result)
+        self.assertIn('color:', result)
+        self.assertIn('web', result)
+        self.assertIn('Starting server...', result)
+    
+    def test_bold_and_color_combination(self):
+        """Test that bold + color creates a single span with both styles"""
+        # Test bold + color in same ANSI sequence
+        text = "\x1b[1;31mBold Red Text\x1b[0m"
+        result = self.processor.ansi_to_html(text)
+        
+        # Should have exactly one opening span
+        span_count = result.count('<span')
+        self.assertEqual(span_count, 1)
+        
+        # Should contain both styles in the same span
+        self.assertIn('font-weight: bold', result)
+        self.assertIn('color:', result)
+        self.assertIn('Bold Red Text', result)
+        
+        # Verify the span contains both styles (not separate spans)
+        import re
+        span_match = re.search(r'<span style="([^"]*)">', result)
+        self.assertIsNotNone(span_match)
+        span_styles = span_match.group(1)
+        self.assertIn('font-weight: bold', span_styles)
+        self.assertIn('color:', span_styles)
+        
+        # Test separate bold and color sequences should also work
+        text2 = "\x1b[1m\x1b[32mSeparate Bold Green\x1b[0m"
+        result2 = self.processor.ansi_to_html(text2)
+        
+        # This might create nested spans, but should still have both styles applied
+        self.assertIn('font-weight: bold', result2)
+        self.assertIn('color:', result2)
+        self.assertIn('Separate Bold Green', result2)
+    
+    def test_complex_formatting(self):
+        """Test complex ANSI sequences with multiple attributes"""
+        # Bold, italic, underlined, colored text
+        text = "\x1b[1;3;4;31mBold italic underlined red\x1b[0m"
+        result = self.processor.ansi_to_html(text)
+        
+        self.assertIn('font-weight: bold', result)
+        self.assertIn('font-style: italic', result)
+        self.assertIn('text-decoration: underline', result)
+        self.assertIn('color:', result)
+        self.assertIn('Bold italic underlined red', result)
+    
+    def test_html_escaping(self):
+        """Test that HTML escaping happens in process_line method"""
+        # Text with HTML characters
+        text = "Line with <script>alert('xss')</script> & ampersands"
+        result = self.processor.process_line(text, 1, "test", time.time())
+        
+        # HTML escaping should happen in process_line, not ansi_to_html
+        self.assertNotIn('<script>', result['html'])
+        self.assertIn('&lt;script&gt;', result['html'])
+        self.assertIn('&amp;', result['html'])
+        self.assertNotIn('&lt;span', result['html'])  # Our span tags should not be escaped
+    
+    def test_ansi_stripping(self):
+        """Test ANSI code stripping for clean text"""
+        text = "\x1b[1;31mRed bold text\x1b[0m with \x1b[32mnormal green\x1b[0m"
+        clean = self.processor.strip_ansi_codes(text)
+        
+        self.assertEqual(clean, "Red bold text with normal green")
+        self.assertNotIn('\x1b', clean)
+        self.assertNotIn('[', clean)
+    
+    def test_color_contrast_enhancement(self):
+        """Test color contrast enhancement for dark theme"""
+        # Dark color should be enhanced
+        dark_color = "#333333"
+        enhanced = self.processor._enhance_color_contrast(dark_color)
+        
+        # Enhanced color should be brighter
+        self.assertNotEqual(enhanced, dark_color)
+        
+        # Bright color should not need enhancement
+        bright_color = "#ffffff"
+        enhanced_bright = self.processor._enhance_color_contrast(bright_color)
+        self.assertEqual(enhanced_bright, bright_color)
+    
+    def test_process_line_complete(self):
+        """Test complete line processing"""
+        line_text = "\x1b[1;36mweb\x1b[0m     | \x1b[32mServer started on port 3000\x1b[0m"
+        line_id = 123
+        process_name = "web"
+        timestamp = time.time()
+        
+        result = self.processor.process_line(line_text, line_id, process_name, timestamp)
+        
+        # Check all required fields
+        self.assertEqual(result['id'], line_id)
+        self.assertEqual(result['process'], process_name)
+        self.assertEqual(result['timestamp'], timestamp)
+        
+        # Check clean text has no ANSI codes
+        self.assertNotIn('\x1b', result['clean_text'])
+        self.assertIn('web', result['clean_text'])
+        self.assertIn('Server started on port 3000', result['clean_text'])
+        
+        # Check HTML has color formatting
+        self.assertIn('<span', result['html'])
+        self.assertIn('color:', result['html'])
+        self.assertIn('font-weight: bold', result['html'])
+        self.assertIn('web', result['html'])
+        self.assertIn('Server started on port 3000', result['html'])
+    
+    def test_edge_cases(self):
+        """Test edge cases and malformed ANSI codes"""
+        # Empty string
+        result = self.processor.ansi_to_html("")
+        self.assertEqual(result, "")
+        
+        # String with no ANSI codes
+        text = "Plain text with no formatting"
+        result = self.processor.ansi_to_html(text)
+        self.assertEqual(result, text)
+        
+        # Malformed ANSI code
+        text = "\x1b[99mUnknown code\x1b[0m"
+        result = self.processor.ansi_to_html(text)
+        self.assertIn("Unknown code", result)
+        
+        # Multiple reset codes
+        text = "\x1b[31mRed\x1b[0m\x1b[0m text"
+        result = self.processor.ansi_to_html(text)
+        self.assertIn("Red", result)
+        self.assertIn("text", result)
+    
+    def test_positioning_sequences_removal(self):
+        """Test that positioning and other non-color ANSI sequences are removed"""
+        # Text with cursor positioning
+        text = "\x1b[2J\x1b[H\x1b[31mCleared screen red text\x1b[0m"
+        result = self.processor.ansi_to_html(text)
+        
+        # Color should be preserved
+        self.assertIn('color:', result)
+        self.assertIn('Cleared screen red text', result)
+        
+        # Positioning codes should be removed (they're not handled by current regex, which is correct)
+        # The regex only handles 'm' sequences (SGR - Select Graphic Rendition)
+    
+    def test_performance_with_long_text(self):
+        """Test performance with longer text blocks"""
+        # Create a long line with multiple ANSI sequences
+        long_text = ""
+        for i in range(100):
+            long_text += f"\x1b[{31 + (i % 7)}mText block {i}\x1b[0m "
+        
+        start_time = time.time()
+        result = self.processor.ansi_to_html(long_text)
+        end_time = time.time()
+        
+        # Should complete quickly (under 1 second)
+        self.assertLess(end_time - start_time, 1.0)
+        
+        # Result should contain all text blocks
+        for i in range(100):
+            self.assertIn(f"Text block {i}", result)
+    
+    def test_nested_and_overlapping_spans(self):
+        """Test that spans are properly nested and don't overlap"""
+        text = "\x1b[31m\x1b[1mBold red\x1b[22m still red\x1b[0m normal"
+        result = self.processor.ansi_to_html(text)
+        
+        # Should contain the text
+        self.assertIn("Bold red", result)
+        self.assertIn("still red", result)
+        self.assertIn("normal", result)
+        
+        # Should have proper span structure
+        self.assertIn("<span", result)
+        self.assertIn("</span>", result)
+    
+    def test_cache_functionality(self):
+        """Test color contrast caching"""
+        color = "#333333"
+        
+        # First call should cache the result
+        result1 = self.processor._enhance_color_contrast(color)
+        
+        # Second call should use cached result
+        result2 = self.processor._enhance_color_contrast(color)
+        
+        self.assertEqual(result1, result2)
+        self.assertIn(color, self.processor.color_contrast_map)
+    
+    def test_luminance_calculation(self):
+        """Test color luminance calculation"""
+        # Black should have very low luminance
+        black_lum = self.processor._get_luminance("#000000")
+        self.assertLess(black_lum, 0.1)
+        
+        # White should have high luminance
+        white_lum = self.processor._get_luminance("#ffffff")
+        self.assertGreater(white_lum, 0.9)
+        
+        # Gray should be in between
+        gray_lum = self.processor._get_luminance("#808080")
+        self.assertGreater(gray_lum, black_lum)
+        self.assertLess(gray_lum, white_lum)
+    
+    def test_256_color_palette(self):
+        """Test 256-color palette generation"""
+        colors = self.processor.ansi_256_colors
+        
+        # Should have exactly 256 colors
+        self.assertEqual(len(colors), 256)
+        
+        # First 16 should be standard colors
+        self.assertEqual(colors[0], '#000000')  # Black
+        self.assertEqual(colors[15], '#ffffff')  # Bright white
+        
+        # All colors should be valid hex
+        for color in colors:
+            self.assertTrue(color.startswith('#'))
+            self.assertEqual(len(color), 7)  # #RRGGBB format
+    
+    def test_realistic_overmind_output(self):
+        """Test with realistic overmind output patterns"""
+        # Typical overmind process start line
+        line = "\x1b[1;36mweb\x1b[0m     | \x1b[32m15:30:45 web.1  | started with pid 12345\x1b[0m"
+        
+        result = self.processor.process_line(line, 1, "web", time.time())
+        
+        # Clean text should be readable
+        expected_clean = "web     | 15:30:45 web.1  | started with pid 12345"
+        self.assertEqual(result['clean_text'], expected_clean)
+        
+        # HTML should preserve process name coloring
+        self.assertIn('font-weight: bold', result['html'])
+        self.assertIn('color:', result['html'])
+        self.assertIn('web', result['html'])
+        self.assertIn('15:30:45', result['html'])
+    
+    def test_special_characters_in_output(self):
+        """Test handling of special characters in output"""
+        line = "Log: User 'admin' logged in with <password> & \"token\""
+        
+        result = self.processor.process_line(line, 1, "app", time.time())
+        
+        # Special HTML characters should be escaped (except quotes which use the default escaping)
+        self.assertIn('&lt;password&gt;', result['html'])
+        self.assertIn('"token"', result['html'])  # html.escape doesn't escape quotes by default
+        self.assertIn('&amp;', result['html'])
+        
+        # Clean text should be unescaped (no HTML entities)
+        self.assertIn('<password>', result['clean_text'])
+        self.assertIn('"token"', result['clean_text'])
+        self.assertIn('&', result['clean_text'])
+
+
+if __name__ == '__main__':
+    # Run the tests
+    unittest.main(verbosity=2)
