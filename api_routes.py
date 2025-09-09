@@ -307,9 +307,13 @@ async def shutdown_overmind(request: Request) -> HTTPResponse:
         success = await request.app.ctx.overmind_controller.quit()
         
         if success:
+            # After successful Overmind shutdown, also shutdown Sanic server
+            # Use add_task to avoid blocking the response
+            request.app.add_task(request.app.stop)
+            
             return response.json({
                 "success": True, 
-                "message": "Overmind quit command executed successfully"
+                "message": "Overmind quit command executed successfully, server shutting down"
             })
         else:
             return response.json({
