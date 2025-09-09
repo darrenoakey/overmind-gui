@@ -134,17 +134,6 @@ function OvermindApp() {
     useEffect(() => {
         console.log('AutoScroll state changed to:', autoScroll);
         autoScrollRef.current = autoScroll;
-        
-        // When autoscroll is re-enabled, trim lines if needed
-        if (autoScroll) {
-            setLines(prevLines => {
-                if (prevLines.length > 5000) {
-                    console.log(`Trimming lines from ${prevLines.length} to 5000 (autoscroll re-enabled)`);
-                    return prevLines.slice(-5000);
-                }
-                return prevLines;
-            });
-        }
     }, [autoScroll]);
     
     // Keep search state ref in sync
