@@ -147,12 +147,32 @@ function OvermindApp() {
     const searchTimeoutRef = useRef(null);
     const searchStateRef = useRef({ searchTerm: '', isSearchActive: false });
     const isManualScrolling = useRef(false);
+    const userInteractingWithScrollbar = useRef(false);
     
-    // Initialize everything
+    // Initialize everything and global event listeners
     useEffect(() => {
         initializeApp();
         fetchVersion();
-        return cleanup;
+        
+        // Global mouse event listeners to handle scrollbar interactions outside container
+        const handleGlobalMouseUp = () => {
+            if (userInteractingWithScrollbar.current) {
+                console.log('Global mouseup - user released scrollbar outside container');
+                userInteractingWithScrollbar.current = false;
+                setTimeout(() => { 
+                    if (!userInteractingWithScrollbar.current) {
+                        isManualScrolling.current = false; 
+                    }
+                }, 300);
+            }
+        };
+        
+        document.addEventListener('mouseup', handleGlobalMouseUp);
+        
+        return () => {
+            document.removeEventListener('mouseup', handleGlobalMouseUp);
+            cleanup();
+        };
     }, []);
     
     // Debug autoScroll changes and keep ref in sync
@@ -1123,6 +1143,39 @@ function OvermindApp() {
                         }
                         // Reset the manual scrolling flag after a short delay
                         setTimeout(() => { isManualScrolling.current = false; }, 150);
+                    },
+                    onMouseDown: (e) => {
+                        // Detect if user is clicking on scrollbar area (right edge of container)
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const scrollbarWidth = 20; // Standard scrollbar width + buffer
+                        const isOnScrollbar = e.clientX >= rect.right - scrollbarWidth;
+                        
+                        if (isOnScrollbar) {
+                            console.log('User clicked on scrollbar - enabling manual scroll detection');
+                            userInteractingWithScrollbar.current = true;
+                            isManualScrolling.current = true;
+                        }
+                    },
+                    onMouseUp: () => {
+                        if (userInteractingWithScrollbar.current) {
+                            console.log('User released scrollbar');
+                            userInteractingWithScrollbar.current = false;
+                            // Keep isManualScrolling true for a bit longer to catch the resulting scroll events
+                            setTimeout(() => { 
+                                if (!userInteractingWithScrollbar.current) {
+                                    isManualScrolling.current = false; 
+                                }
+                            }, 300);
+                        }
+                    },
+                    onMouseLeave: () => {
+                        // If mouse leaves container while dragging scrollbar, still handle it
+                        if (userInteractingWithScrollbar.current) {
+                            setTimeout(() => { 
+                                userInteractingWithScrollbar.current = false;
+                                isManualScrolling.current = false; 
+                            }, 300);
+                        }
                     }
                 },
                     React.createElement(Virtuoso, {
