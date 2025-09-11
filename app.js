@@ -130,7 +130,6 @@ function OvermindApp() {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterText, setFilterText] = useState('');
     const [debouncedFilterText, setDebouncedFilterText] = useState('');
-    const [isFiltering, setIsFiltering] = useState(false);
     const [version, setVersion] = useState('');
     
     // Search-specific state
@@ -169,17 +168,12 @@ function OvermindApp() {
     
     // Debounce filter text to prevent expensive re-filtering on every keystroke
     useEffect(() => {
-        if (filterText !== debouncedFilterText) {
-            setIsFiltering(true);
-        }
-        
         const timer = setTimeout(() => {
             setDebouncedFilterText(filterText);
-            setIsFiltering(false);
         }, 300); // 300ms debounce
         
         return () => clearTimeout(timer);
-    }, [filterText, debouncedFilterText]);
+    }, [filterText]);
     
     const fetchVersion = async () => {
         try {
@@ -980,14 +974,12 @@ function OvermindApp() {
                         React.createElement('input', {
                             key: 'filter',
                             type: 'text',
-                            placeholder: isFiltering ? 'Filtering...' : 'Filter output...',
+                            placeholder: 'Filter output...',
                             value: filterText,
                             onChange: handleFilterChange,
                             className: 'filter-input',
                             style: { 
-                                marginBottom: '0.5rem',
-                                opacity: isFiltering ? 0.7 : 1.0,
-                                backgroundColor: isFiltering ? '#fffbf0' : ''
+                                marginBottom: '0.5rem'
                             }
                         }),
                         // Search input container
