@@ -177,17 +177,11 @@ class ANSIProcessor:
                     except (ValueError, IndexError):
                         pass
                 
-                # Handle 256-color background: 48;5;N
+                # Handle 256-color background: 48;5;N - SUPPRESSED
                 elif code_num == 48 and i + 2 < len(code_list) and code_list[i + 1] == '5':
-                    try:
-                        color_index = int(code_list[i + 2])
-                        if 0 <= color_index < len(self.ansi_256_colors):
-                            color = self.ansi_256_colors[color_index]
-                            styles.append(f'background-color: {color}')
-                            i += 3
-                            continue
-                    except (ValueError, IndexError):
-                        pass
+                    # Skip background colors - consume the sequence but don't apply styling
+                    i += 3
+                    continue
                 
                 # Handle basic 8/16 colors
                 elif code in self.ansi_colors:
@@ -195,7 +189,8 @@ class ANSIProcessor:
                     enhanced_color = self._enhance_color_contrast(original_color)
                     styles.append(f'color: {enhanced_color}')
                 elif code in self.ansi_bg_colors:
-                    styles.append(f'background-color: {self.ansi_bg_colors[code]}')
+                    # Skip background colors - consume the code but don't apply styling
+                    pass
                 elif code_num == 1:
                     styles.append('font-weight: bold')
                 elif code_num == 3:
@@ -311,12 +306,12 @@ class TestANSIProcessor(unittest.TestCase):
         self.assertIn('color:', result)
         self.assertIn('Bright red', result)
         
-        # 256-color background (should be applied)
+        # 256-color background (should be suppressed)
         text = "\x1b[48;5;21mBlue background\x1b[0m"  # Color 21 is blue
         result = self.processor.ansi_to_html(text)
         self.assertIn('Blue background', result)
-        # Background colors should be applied
-        self.assertIn('background-color:', result)
+        # Background colors should be suppressed
+        self.assertNotIn('background-color:', result)
     
     def test_process_name_colors(self):
         """Test that process names maintain their colors and bold formatting"""
@@ -699,6 +694,42 @@ class TestANSIProcessor(unittest.TestCase):
         # Clean text should be simple
         self.assertEqual(clean_result, "Error: Fixed!")
         self.assertNotIn('\x1b', clean_result)
+    
+    def test_background_color_suppression(self):
+        """Test that background colors are suppressed"""
+        # Test basic background colors
+        text_with_bg = "\x1b[41mRed background\x1b[0m normal \x1b[46mCyan background\x1b[0m"
+        result = self.processor.ansi_to_html(text_with_bg)
+        
+        # Should not contain any background-color styles
+        self.assertNotIn('background-color:', result)
+        
+        # Should still contain the text
+        self.assertIn('Red background', result)
+        self.assertIn('Cyan background', result)
+        self.assertIn('normal', result)
+        
+        # Test 256-color background
+        text_with_256_bg = "\x1b[48;5;196mBright red background\x1b[0m \x1b[31mForeground red\x1b[0m"
+        result2 = self.processor.ansi_to_html(text_with_256_bg)
+        
+        # Should not contain background-color
+        self.assertNotIn('background-color:', result2)
+        
+        # Should contain foreground color but not background
+        self.assertIn('color:', result2)  # Foreground red should be preserved
+        self.assertIn('Bright red background', result2)
+        self.assertIn('Foreground red', result2)
+        
+        # Test mixed foreground and background
+        mixed_text = "\x1b[1;31;42mBold red text on green background\x1b[0m"
+        result3 = self.processor.ansi_to_html(mixed_text)
+        
+        # Should have bold and color but no background
+        self.assertIn('font-weight: bold', result3)
+        self.assertIn('color:', result3)
+        self.assertNotIn('background-color:', result3)
+        self.assertIn('Bold red text on green background', result3)
 
 
 if __name__ == '__main__':
