@@ -142,34 +142,6 @@ function OvermindApp() {
         searchStateRef.current = { searchTerm, isSearchActive };
     }, [searchTerm, isSearchActive]);
     
-    // Keyboard navigation for search results
-    useEffect(() => {
-        const handleKeyDown = (e) => {
-            // Only handle Tab navigation when search is active
-            if (!isSearchActive || searchResults.length === 0) return;
-            
-            if (e.key === 'Tab') {
-                e.preventDefault(); // Prevent default tab behavior
-                
-                if (e.shiftKey) {
-                    // Shift+Tab = previous result
-                    goToPrevSearchResult();
-                } else {
-                    // Tab = next result
-                    goToNextSearchResult();
-                }
-            }
-        };
-        
-        // Add event listener to document
-        document.addEventListener('keydown', handleKeyDown);
-        
-        // Cleanup
-        return () => {
-            document.removeEventListener('keydown', handleKeyDown);
-        };
-    }, [isSearchActive, searchResults.length, goToNextSearchResult, goToPrevSearchResult]);
-    
     const fetchVersion = async () => {
         try {
             const response = await fetch('/api/state');
@@ -728,6 +700,34 @@ function OvermindApp() {
             });
         }
     }, [searchResults, currentSearchIndex]);
+    
+    // Keyboard navigation for search results (must be after function definitions)
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            // Only handle Tab navigation when search is active
+            if (!isSearchActive || searchResults.length === 0) return;
+            
+            if (e.key === 'Tab') {
+                e.preventDefault(); // Prevent default tab behavior
+                
+                if (e.shiftKey) {
+                    // Shift+Tab = previous result
+                    goToPrevSearchResult();
+                } else {
+                    // Tab = next result
+                    goToNextSearchResult();
+                }
+            }
+        };
+        
+        // Add event listener to document
+        document.addEventListener('keydown', handleKeyDown);
+        
+        // Cleanup
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [isSearchActive, searchResults.length, goToNextSearchResult, goToPrevSearchResult]);
     
     const handleSelectAll = async () => {
         console.log('Select All clicked');
