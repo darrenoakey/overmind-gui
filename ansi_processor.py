@@ -42,6 +42,10 @@ class ANSIProcessor:
         # Compiled regex for better performance
         self.ansi_regex = re.compile(r'[\x1b\u001b]\[([0-9;]*)m')
         self.reset_regex = re.compile(r'[\x1b\u001b]\[0*m')
+        # Regex to catch ANY remaining ANSI escape sequences (cursor movement, clearing, etc.)
+        # Also includes standalone \r (carriage return) characters that often come with terminal output
+        self.ansi_cleanup_regex = re.compile(r'[\x1b\u001b]\[[0-9;]*[A-Za-z]')
+        self.carriage_return_regex = re.compile(r'\r')
     
     def _build_256_color_palette(self) -> List[str]:
         """Build the 256-color ANSI palette"""
@@ -212,26 +216,52 @@ class ANSIProcessor:
             return ''
         
         html = self.ansi_regex.sub(replace_ansi, html)
+        
+        # FINAL STEP: Remove any remaining ANSI escape sequences (cursor movement, clearing, etc.)
+        # This catches sequences like \x1b[2K, \x1b[1A, \x1b[G, etc. that we don't want in HTML
+        html = self.ansi_cleanup_regex.sub('', html)
+        # Also remove carriage returns that often appear with terminal control sequences
+        html = self.carriage_return_regex.sub('', html)
+        
         return html
     
     def strip_ansi_codes(self, text: str) -> str:
-        """Strip ANSI codes for searching"""
-        return self.ansi_regex.sub('', text)
+        """Strip ALL ANSI codes for searching"""
+        # Remove SGR sequences (colors, bold, etc.)
+        clean_text = self.ansi_regex.sub('', text)
+        # Remove all other ANSI sequences
+        clean_text = self.ansi_cleanup_regex.sub('', clean_text)
+        # Remove carriage returns
+        clean_text = self.carriage_return_regex.sub('', clean_text)
+        return clean_text
     
-    def process_line(self, line_text: str, line_id: int, process_name: str) -> Dict:
+    def process_line(self, line_text: str, line_id: int, process_name: str, timestamp: float = None) -> Dict:
         """Process a single line and return only HTML representation"""
         # First escape any existing HTML characters in the raw text (before ANSI processing)
         import html
+        import time
         escaped_text = html.escape(line_text, quote=False)
         
         # Then convert ANSI codes to HTML spans (this preserves our HTML tags)
         html_content = self.ansi_to_html(escaped_text)
         
-        return {
+        # Create clean text for searching (strip all ANSI codes)
+        clean_text = self.strip_ansi_codes(line_text)
+        
+        result = {
             'id': line_id,
-            'html': html_content,  # Only HTML representation - used for display and search
+            'html': html_content,  # HTML representation - used for display
             'process': process_name
         }
+        
+        # Add optional fields that tests might expect
+        if timestamp is not None:
+            result['timestamp'] = timestamp
+        
+        # Add clean text for backward compatibility with tests
+        result['clean_text'] = clean_text
+        
+        return result
 
 
 # Global instance
@@ -437,8 +467,33 @@ class TestANSIProcessor(unittest.TestCase):
         self.assertIn('color:', result)
         self.assertIn('Cleared screen red text', result)
         
-        # Positioning codes should be removed (they're not handled by current regex, which is correct)
-        # The regex only handles 'm' sequences (SGR - Select Graphic Rendition)
+        # Positioning codes should be completely removed
+        self.assertNotIn('\x1b[2J', result)
+        self.assertNotIn('\x1b[H', result)
+        
+        # Test specific common sequences
+        test_cases = [
+            ("\x1b[2KLine with clear line\x1b[31mred\x1b[0m", "Line with clear linered"),
+            ("\x1b[1AMove up\x1b[32mgreen\x1b[0m", "Move upgreen"),
+            ("\x1b[GCarriage return\x1b[31mred\x1b[0m", "Carriage returnred"),
+            ("\x1b[5CMove right\x1b[36mcyan\x1b[0m", "Move rightcyan"),
+            ("\x1b[3BMove down\x1b[35mmagenta\x1b[0m", "Move downmagenta"),
+            ("\x1b[0J\x1b[2K\x1b[HMultiple clear\x1b[33myellow\x1b[0m", "Multiple clearyellow")
+        ]
+        
+        for input_text, expected_clean in test_cases:
+            html_result = self.processor.ansi_to_html(input_text)
+            clean_result = self.processor.strip_ansi_codes(input_text)
+            
+            # HTML should not contain any escape sequences
+            self.assertNotIn('\x1b', html_result, f"HTML result contains escape sequences: {html_result}")
+            
+            # Clean text should match expected
+            self.assertEqual(clean_result, expected_clean, f"Clean text mismatch for input: {input_text}")
+            
+            # HTML should still contain color spans where expected
+            if 'red' in input_text or 'green' in input_text or 'cyan' in input_text or 'magenta' in input_text or 'yellow' in input_text:
+                self.assertIn('color:', html_result, f"Color missing from HTML: {html_result}")
     
     def test_performance_with_long_text(self):
         """Test performance with longer text blocks"""
@@ -548,6 +603,102 @@ class TestANSIProcessor(unittest.TestCase):
         self.assertIn('<password>', result['clean_text'])
         self.assertIn('"token"', result['clean_text'])
         self.assertIn('&', result['clean_text'])
+    
+    def test_comprehensive_ansi_cleanup(self):
+        """Test comprehensive removal of all ANSI sequences while preserving colors"""
+        # Complex text with many types of ANSI sequences
+        test_input = (
+            "\x1b[2J"              # Clear entire screen
+            "\x1b[H"               # Move cursor to home
+            "\x1b[1;31m"           # Bold red (should be preserved)
+            "Important: "
+            "\x1b[0m"              # Reset (should be preserved)
+            "\x1b[2K"              # Clear line
+            "\x1b[32m"             # Green (should be preserved)
+            "Success message"
+            "\x1b[0m"              # Reset (should be preserved)
+            "\x1b[5C"              # Move cursor right 5
+            "\x1b[1A"              # Move cursor up 1
+            "\x1b[G"               # Move cursor to column 1
+            " - Done"
+        )
+        
+        expected_clean_text = "Important: Success message - Done"
+        
+        # Test HTML conversion
+        html_result = self.processor.ansi_to_html(test_input)
+        
+        # Should not contain any escape sequences
+        self.assertNotIn('\x1b', html_result)
+        
+        # Should contain color formatting
+        self.assertIn('color:', html_result)
+        self.assertIn('font-weight: bold', html_result)
+        
+        # Should contain the actual text
+        self.assertIn('Important:', html_result)
+        self.assertIn('Success message', html_result)
+        self.assertIn('- Done', html_result)
+        
+        # Test clean text stripping
+        clean_result = self.processor.strip_ansi_codes(test_input)
+        self.assertEqual(clean_result, expected_clean_text)
+        
+        # Test with realistic scenarios
+        realistic_tests = [
+            # Docker-style output with clearing
+            ("\x1b[1A\x1b[2K\r\x1b[32m✓\x1b[0m Build completed", "✓ Build completed"),
+            
+            # Progress bar clearing
+            ("\x1b[2K\rProgress: \x1b[36m████████\x1b[0m 100%", "Progress: ████████ 100%"),
+            
+            # Terminal clearing with colors
+            ("\x1b[H\x1b[2J\x1b[1;33mStarting application...\x1b[0m", "Starting application..."),
+            
+            # Complex cursor movement
+            ("\x1b[3;5H\x1b[31mError:\x1b[0m \x1b[1mFile not found\x1b[0m", "Error: File not found")
+        ]
+        
+        for test_text, expected in realistic_tests:
+            html = self.processor.ansi_to_html(test_text)
+            clean = self.processor.strip_ansi_codes(test_text)
+            
+            # No escape sequences in output
+            self.assertNotIn('\x1b', html, f"Escape sequences found in HTML: {html}")
+            self.assertNotIn('\x1b', clean, f"Escape sequences found in clean text: {clean}")
+            
+            # Clean text matches expected
+            self.assertEqual(clean, expected, f"Clean text mismatch: expected '{expected}', got '{clean}'")
+            
+            # HTML contains the expected text content
+            for word in expected.split():
+                if word not in ['████████']:  # Skip special characters that might be formatted
+                    self.assertIn(word, html, f"Word '{word}' missing from HTML: {html}")
+    
+    def test_ansi_cleanup_preserves_colors_and_formatting(self):
+        """Ensure cleanup doesn't interfere with color and formatting preservation"""
+        # Text mixing cleanup sequences with color/formatting
+        text_with_mixed = "\x1b[2K\x1b[1;31mError:\x1b[0m\x1b[G \x1b[32mFixed!\x1b[0m\x1b[1A"
+        
+        html_result = self.processor.ansi_to_html(text_with_mixed)
+        clean_result = self.processor.strip_ansi_codes(text_with_mixed)
+        
+        # Should preserve colors and bold
+        self.assertIn('font-weight: bold', html_result)
+        self.assertIn('color:', html_result)
+        
+        # Should contain text
+        self.assertIn('Error:', html_result)
+        self.assertIn('Fixed!', html_result)
+        
+        # Should not contain positioning sequences
+        self.assertNotIn('\x1b[2K', html_result)
+        self.assertNotIn('\x1b[G', html_result) 
+        self.assertNotIn('\x1b[1A', html_result)
+        
+        # Clean text should be simple
+        self.assertEqual(clean_result, "Error: Fixed!")
+        self.assertNotIn('\x1b', clean_result)
 
 
 if __name__ == '__main__':

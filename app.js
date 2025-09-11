@@ -97,8 +97,9 @@ class DataProcessor {
 
 // Main React App Component
 function OvermindApp() {
-    // State - using per-process circular buffers instead of single array
-    const [processLines, setProcessLines] = useState({}); // { processName: [line1, line2, ...] }
+    // State - using single list with process counting for optimal performance
+    const [allLines, setAllLines] = useState([]); // Single chronological array
+    const [processLineCounts, setProcessLineCounts] = useState({}); // { processName: count }
     const [processes, setProcesses] = useState({});
     const [stats, setStats] = useState({});
     const [isConnected, setIsConnected] = useState(false);
@@ -184,40 +185,66 @@ function OvermindApp() {
             // Load initial process list
             await loadProcessList();
             
-            // Set up data processor callback - now maintains per-process circular buffers
+            // Set up data processor callback - using single list for optimal performance
             dataProcessor.current.onBatchProcessed = (processedLines) => {
-                setProcessLines(prevProcessLines => {
-                    const newProcessLines = { ...prevProcessLines };
+                setAllLines(prevAllLines => {
+                    // Simply append new lines (they arrive in chronological order)
+                    let newAllLines = [...prevAllLines, ...processedLines];
                     
-                    // Group incoming lines by process
-                    const linesByProcess = {};
+                    // Update process line counts
+                    const newCounts = {};
                     processedLines.forEach(line => {
                         const processName = line.processName || 'unknown';
-                        if (!linesByProcess[processName]) {
-                            linesByProcess[processName] = [];
-                        }
-                        linesByProcess[processName].push(line);
+                        newCounts[processName] = (newCounts[processName] || 0) + 1;
                     });
                     
-                    // Update each process's circular buffer
-                    Object.entries(linesByProcess).forEach(([processName, newLines]) => {
-                        if (!newProcessLines[processName]) {
-                            newProcessLines[processName] = [];
+                    // Check if any process exceeds limits and perform cleanup
+                    setProcessLineCounts(prevCounts => {
+                        const updatedCounts = { ...prevCounts };
+                        const processesToCleanup = [];
+                        
+                        Object.entries(newCounts).forEach(([processName, additionalCount]) => {
+                            const newTotal = (updatedCounts[processName] || 0) + additionalCount;
+                            updatedCounts[processName] = newTotal;
+                            
+                            // If process exceeds limit, mark for cleanup
+                            if (newTotal > MAX_LINES_PER_PROCESS) {
+                                const excessLines = newTotal - MAX_LINES_PER_PROCESS;
+                                processesToCleanup.push({ processName, excessLines });
+                            }
+                        });
+                        
+                        // Perform cleanup if needed (expensive but infrequent)
+                        if (processesToCleanup.length > 0) {
+                            console.log(`Cleaning up excess lines for ${processesToCleanup.length} processes`);
+                            
+                            processesToCleanup.forEach(({ processName, excessLines }) => {
+                                // Find and remove the oldest lines for this process
+                                const indicesToRemove = [];
+                                let removedCount = 0;
+                                
+                                for (let i = 0; i < newAllLines.length && removedCount < excessLines; i++) {
+                                    if (newAllLines[i].processName === processName) {
+                                        indicesToRemove.push(i);
+                                        removedCount++;
+                                    }
+                                }
+                                
+                                // Remove lines in reverse order to maintain indices
+                                for (let i = indicesToRemove.length - 1; i >= 0; i--) {
+                                    newAllLines.splice(indicesToRemove[i], 1);
+                                }
+                                
+                                // Update count
+                                updatedCounts[processName] -= removedCount;
+                                console.log(`Process ${processName}: removed ${removedCount} oldest lines`);
+                            });
                         }
                         
-                        // Add new lines to the process buffer
-                        const updatedBuffer = [...newProcessLines[processName], ...newLines];
-                        
-                        // Trim to MAX_LINES_PER_PROCESS (circular buffer)
-                        if (updatedBuffer.length > MAX_LINES_PER_PROCESS) {
-                            newProcessLines[processName] = updatedBuffer.slice(-MAX_LINES_PER_PROCESS);
-                            console.log(`Process ${processName}: trimmed to ${MAX_LINES_PER_PROCESS} lines`);
-                        } else {
-                            newProcessLines[processName] = updatedBuffer;
-                        }
+                        return updatedCounts;
                     });
                     
-                    return newProcessLines;
+                    return newAllLines;
                 });
             };
             
@@ -303,30 +330,26 @@ function OvermindApp() {
     const stableFilteredLines = useRef([]);
     const lastProcessSelection = useRef('');
     
-    // Build filtered lines from selected processes, sorted by ID, limited to MAX_DISPLAY_LINES
+    // Build filtered lines from single list - much faster than per-process approach
     const filteredLines = useMemo(() => {
-        // Step 1: Collect lines from all selected processes
-        const selectedLines = [];
-        
-        Object.entries(processLines).forEach(([processName, lines]) => {
+        // Step 1: Filter by selected processes and text filter (single pass)
+        const selectedLines = allLines.filter(line => {
+            const processName = line.processName || 'unknown';
             const processInfo = processes[processName];
             const isSelected = processInfo?.selected !== false;
             
-            if (isSelected && lines && lines.length > 0) {
-                // Add all lines from this selected process
-                lines.forEach(line => {
-                    // Apply text filter
-                    if (!filterText || line.htmlContent.toLowerCase().includes(filterText.toLowerCase())) {
-                        selectedLines.push(line);
-                    }
-                });
+            // Check process selection
+            if (!isSelected) return false;
+            
+            // Check text filter
+            if (filterText && !line.htmlContent.toLowerCase().includes(filterText.toLowerCase())) {
+                return false;
             }
+            
+            return true;
         });
         
-        // Step 2: Sort by ID to maintain chronological order
-        selectedLines.sort((a, b) => a.id - b.id);
-        
-        // Step 3: Take the last MAX_DISPLAY_LINES (most recent)
+        // Step 2: Take the last MAX_DISPLAY_LINES (most recent) - no sorting needed!
         const newResult = selectedLines.length > MAX_DISPLAY_LINES ? 
             selectedLines.slice(-MAX_DISPLAY_LINES) : 
             selectedLines;
@@ -350,9 +373,9 @@ function OvermindApp() {
         // Update display and references
         stableFilteredLines.current = newResult;
         lastProcessSelection.current = currentProcessSelection;
-        console.log(`Display updated: ${newResult.length} lines from ${Object.keys(processLines).length} total processes`);
+        console.log(`Display updated: ${newResult.length} lines from ${allLines.length} total lines`);
         return newResult;
-    }, [processLines, processes, filterText, autoScroll]);
+    }, [allLines, processes, filterText, autoScroll]);
     
     
     // Highlight search term in HTML content
@@ -378,25 +401,23 @@ function OvermindApp() {
         }
         
         // Get current filtered lines at search time to avoid dependency issues
-        const currentFilteredLines = [];
-        
-        Object.entries(processLines).forEach(([processName, lines]) => {
+        const currentFilteredLines = allLines.filter(line => {
+            const processName = line.processName || 'unknown';
             const processInfo = processes[processName];
             const isSelected = processInfo?.selected !== false;
             
-            if (isSelected && lines && lines.length > 0) {
-                lines.forEach(line => {
-                    if (!filterText || line.htmlContent.toLowerCase().includes(filterText.toLowerCase())) {
-                        currentFilteredLines.push(line);
-                    }
-                });
+            // Check process selection
+            if (!isSelected) return false;
+            
+            // Check text filter
+            if (filterText && !line.htmlContent.toLowerCase().includes(filterText.toLowerCase())) {
+                return false;
             }
+            
+            return true;
         });
         
-        // Sort by ID to maintain chronological order
-        currentFilteredLines.sort((a, b) => a.id - b.id);
-        
-        // Take the last MAX_DISPLAY_LINES (most recent)
+        // Take the last MAX_DISPLAY_LINES (most recent) - already sorted chronologically
         const finalFilteredLines = currentFilteredLines.length > MAX_DISPLAY_LINES ? 
             currentFilteredLines.slice(-MAX_DISPLAY_LINES) : 
             currentFilteredLines;
@@ -447,7 +468,7 @@ function OvermindApp() {
                 return finalIndex;
             });
         }
-    }, [processLines, processes, filterText, highlightSearchTerm]); // More stable dependencies
+    }, [allLines, processes, filterText, highlightSearchTerm]); // More stable dependencies
     
     // Debounced search effect - ONLY depends on searchTerm
     useEffect(() => {
@@ -812,9 +833,7 @@ function OvermindApp() {
                 React.createElement('div', { className: 'status-bar' }, [
                     React.createElement('div', { key: 'lines', className: 'status-item' }, [
                         React.createElement('span', { key: 'label' }, 'Lines: '),
-                        React.createElement('span', { key: 'value' }, 
-                            Object.values(processLines).reduce((total, processBuffer) => total + (processBuffer?.length || 0), 0)
-                        )
+                        React.createElement('span', { key: 'value' }, allLines.length)
                     ]),
                     React.createElement('div', { key: 'autoscroll', className: 'status-item' }, [
                         React.createElement('span', { key: 'label' }, 'Autoscroll: '),
