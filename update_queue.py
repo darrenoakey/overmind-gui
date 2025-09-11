@@ -33,13 +33,18 @@ class UpdateItem:
 
 
 class UpdateQueue:
-    """Message-based queue system for polling clients with incremental IDs"""
+    """Message-based queue system with per-process circular buffers"""
     
-    def __init__(self, max_messages: int = 10000):
+    def __init__(self, max_messages: int = 10000, max_lines_per_process: int = 10000):
         self.updates: deque = deque(maxlen=max_messages)
         self.lock = Lock()
         self.line_counter = 0
         self.message_counter = 0  # Incremental message ID starting at 1
+        
+        # Per-process line storage and counting
+        self.process_lines: Dict[str, deque] = {}  # Process name -> deque of lines
+        self.process_line_counts: Dict[str, int] = {}  # Process name -> total count
+        self.max_lines_per_process = max_lines_per_process
         
         # Current process statuses for tracking changes
         self.process_statuses: Dict[str, str] = {}
@@ -50,7 +55,7 @@ class UpdateQueue:
         return self.message_counter
     
     def add_output_line(self, line_text: str, process_name: str):
-        """Add a new output line update - pre-process with ANSI conversion"""
+        """Add a new output line update with per-process circular buffering"""
         with self.lock:
             self.line_counter += 1
             message_id = self._get_next_message_id()
@@ -61,6 +66,15 @@ class UpdateQueue:
                 self.line_counter, 
                 process_name
             )
+            
+            # Initialize process buffer if needed
+            if process_name not in self.process_lines:
+                self.process_lines[process_name] = deque(maxlen=self.max_lines_per_process)
+                self.process_line_counts[process_name] = 0
+            
+            # Add to per-process buffer (deque handles circular buffering automatically)
+            self.process_lines[process_name].append(processed_line)
+            self.process_line_counts[process_name] += 1
             
             # Create update with pre-processed data and message ID
             update = UpdateItem('output', processed_line, message_id)
@@ -191,19 +205,47 @@ class UpdateQueue:
             self.updates.append(update)
     
     def clear_all(self):
-        """Clear all updates"""
+        """Clear all updates and process buffers"""
         with self.lock:
             self.updates.clear()
+            self.process_lines.clear()
+            self.process_line_counts.clear()
             # Don't reset message counter - clients need unique IDs across clears
+    
+    def get_start_message_id(self) -> int:
+        """Get the starting message ID for new clients to get full buffer history"""
+        with self.lock:
+            if not self.updates:
+                # Empty buffer - start from current position
+                return self.message_counter
+            
+            # Return the oldest message ID in the buffer 
+            # This allows new clients to get the full history
+            return self.updates[0].message_id
     
     def get_stats(self) -> Dict[str, Any]:
         """Get queue statistics"""
         with self.lock:
+            # Calculate per-process line counts
+            process_stats = {}
+            total_buffered_lines = 0
+            
+            for process_name, lines in self.process_lines.items():
+                line_count = len(lines)
+                total_buffered_lines += line_count
+                process_stats[process_name] = {
+                    'buffered_lines': line_count,
+                    'total_lines_ever': self.process_line_counts.get(process_name, 0)
+                }
+            
             return {
                 'total_messages': len(self.updates),
                 'latest_message_id': self.message_counter,
                 'total_lines': self.line_counter,
-                'queue_capacity': self.updates.maxlen
+                'total_buffered_lines': total_buffered_lines,
+                'process_stats': process_stats,
+                'queue_capacity': self.updates.maxlen,
+                'max_lines_per_process': self.max_lines_per_process
             }
 
 

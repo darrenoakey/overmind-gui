@@ -5,7 +5,7 @@
 
 // Maximum number of lines to keep per process
 // Each process maintains a circular buffer of this size
-export const MAX_LINES_PER_PROCESS = 5000;
+export const MAX_LINES_PER_PROCESS = 10000;
 
 // Maximum number of lines to display from selected processes
 // When multiple processes are selected, show the most recent N lines across all selected processes

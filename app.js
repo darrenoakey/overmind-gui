@@ -207,7 +207,7 @@ function OvermindApp() {
                             const newTotal = (updatedCounts[processName] || 0) + additionalCount;
                             updatedCounts[processName] = newTotal;
                             
-                            // If process exceeds limit, mark for cleanup
+                            // If process exceeds limit, mark for cleanup (now 10k per process)
                             if (newTotal > MAX_LINES_PER_PROCESS) {
                                 const excessLines = newTotal - MAX_LINES_PER_PROCESS;
                                 processesToCleanup.push({ processName, excessLines });

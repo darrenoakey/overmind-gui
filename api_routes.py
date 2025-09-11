@@ -94,7 +94,8 @@ async def poll_updates(request: Request) -> HTTPResponse:
             "status_updates": response_package['status_updates'],
             "total_lines": response_package['total_lines'],
             "other_updates": response_package['other_updates'],
-            "latest_message_id": latest_message_id,  # Changed from timestamp
+            "latest_message_id": latest_message_id,  # Current latest message ID
+            "next_poll_message_id": latest_message_id,  # Next ID to poll from (usually latest + 1, but handled by client)
             "stats": stats,
             "queue_stats": update_queue.get_stats()
         })
@@ -243,6 +244,21 @@ async def clear_output(request: Request) -> HTTPResponse:
             "success": True, 
             "message": "Output cleared",
             "latest_message_id": update_queue.message_counter
+        })
+        
+    except Exception as e:
+        return response.json({"error": str(e)}, status=500)
+
+
+@api_bp.route("/get-start", methods=["GET"])
+async def get_start_position(request: Request) -> HTTPResponse:
+    """Get the starting message ID for new clients to get full buffer"""
+    try:
+        start_message_id = update_queue.get_start_message_id()
+        
+        return response.json({
+            "start_message_id": start_message_id,
+            "message": f"Start polling from message ID {start_message_id}"
         })
         
     except Exception as e:
