@@ -72,6 +72,29 @@ class DataProcessor {
     processBatch(lines) {
         if (!this.workerReady) return;
         
+        const CHUNK_SIZE = 100; // Process in chunks of 100 lines max to prevent UI freezing
+        
+        if (lines.length <= CHUNK_SIZE) {
+            // Small batch - process immediately
+            this.processBatchChunk(lines);
+        } else {
+            // Large batch - break into chunks and process with delays
+            console.log(`📦 Large batch detected (${lines.length} lines), processing in chunks of ${CHUNK_SIZE}`);
+            
+            for (let i = 0; i < lines.length; i += CHUNK_SIZE) {
+                const chunk = lines.slice(i, i + CHUNK_SIZE);
+                const delay = Math.floor(i / CHUNK_SIZE) * 10; // 10ms delay between chunks
+                
+                setTimeout(() => {
+                    this.processBatchChunk(chunk);
+                }, delay);
+            }
+        }
+    }
+    
+    processBatchChunk(lines) {
+        if (!this.workerReady) return;
+        
         // Convert API format to worker format
         const workerLines = lines.map(line => ({
             html: line.html,
@@ -201,15 +224,25 @@ function OvermindApp() {
             // Load initial process list
             await loadProcessList();
             
-            // Set up data processor callback - using single list for optimal performance
-            dataProcessor.current.onBatchProcessed = (processedLines) => {
+            // Set up throttled batch processing to prevent UI freezing with large updates
+            let batchedUpdates = [];
+            let updateTimer = null;
+            
+            const flushBatchedUpdates = () => {
+                if (batchedUpdates.length === 0) return;
+                
+                const linesToProcess = batchedUpdates;
+                batchedUpdates = [];
+                
+                console.log(`🔄 Flushing ${linesToProcess.length} batched lines to UI`);
+                
                 setAllLines(prevAllLines => {
                     // Simply append new lines (they arrive in chronological order)
-                    let newAllLines = [...prevAllLines, ...processedLines];
+                    let newAllLines = [...prevAllLines, ...linesToProcess];
                     
                     // Update process line counts
                     const newCounts = {};
-                    processedLines.forEach(line => {
+                    linesToProcess.forEach(line => {
                         const processName = line.processName || 'unknown';
                         newCounts[processName] = (newCounts[processName] || 0) + 1;
                     });
@@ -262,6 +295,30 @@ function OvermindApp() {
                     
                     return newAllLines;
                 });
+            };
+            
+            // Set up data processor callback - using batched updates for performance
+            dataProcessor.current.onBatchProcessed = (processedLines) => {
+                // Add to batch instead of immediately updating
+                batchedUpdates.push(...processedLines);
+                
+                // Clear existing timer and set new one
+                if (updateTimer) {
+                    clearTimeout(updateTimer);
+                }
+                
+                // Flush updates after 50ms of no new data, or immediately if batch gets large
+                const BATCH_SIZE_LIMIT = 200;
+                const BATCH_DELAY = 50;
+                
+                if (batchedUpdates.length >= BATCH_SIZE_LIMIT) {
+                    // Large batch - flush immediately
+                    console.log(`⚡ Large batch (${batchedUpdates.length} lines), flushing immediately`);
+                    flushBatchedUpdates();
+                } else {
+                    // Small batch - wait for more or timeout
+                    updateTimer = setTimeout(flushBatchedUpdates, BATCH_DELAY);
+                }
             };
             
             // Layer 2: Initialize state manager
@@ -883,7 +940,10 @@ function OvermindApp() {
                 React.createElement('div', { className: 'status-bar' }, [
                     React.createElement('div', { key: 'lines', className: 'status-item' }, [
                         React.createElement('span', { key: 'label' }, 'Lines: '),
-                        React.createElement('span', { key: 'value' }, allLines.length)
+                        React.createElement('span', { 
+                        key: 'value', 
+                        title: `Filtered: ${filteredLines.length} | Processing: ${pollingManager.current?.lastProcessingTime || 0}ms` 
+                    }, allLines.length)
                     ]),
                     React.createElement('div', { key: 'autoscroll', className: 'status-item' }, [
                         React.createElement('span', { key: 'label' }, 'Autoscroll: '),

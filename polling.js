@@ -8,10 +8,14 @@ class PollingManager {
         this.isPolling = false;
         this.pollInterval = null;
         this.lastMessageId = 0;
-        this.pollFrequency = 1000; // Once per second
+        this.pollFrequency = 1000; // Once per second (base frequency)
+        this.maxPollFrequency = 5000; // Max 5 seconds between polls when processing is slow
+        this.minPollFrequency = 500; // Min 500ms between polls
+        this.adaptivePollingThreshold = 500; // If processing takes > 500ms, slow down
         this.errorRetryDelay = 2000; // 2 seconds
         this.maxRetries = 5;
         this.retryCount = 0;
+        this.lastProcessingTime = 0;
         
         // Event handlers - NEW PROTOCOL
         this.onPollingResponse = null;  // NEW: handles complete polling response
@@ -114,7 +118,7 @@ class PollingManager {
     }
     
     /**
-     * Schedule next poll after processing is complete
+     * Schedule next poll after processing is complete with adaptive timing
      */
     scheduleNextPoll(startTime) {
         if (!this.isPolling) {
@@ -122,12 +126,33 @@ class PollingManager {
         }
         
         const processingTime = performance.now() - startTime;
-        const delay = Math.max(0, this.pollFrequency + processingTime);
+        this.lastProcessingTime = processingTime;
+        
+        // Adaptive polling: if processing is slow, poll less frequently
+        let adaptiveFrequency = this.pollFrequency;
+        
+        if (processingTime > this.adaptivePollingThreshold) {
+            // Slow processing detected - reduce polling frequency proportionally
+            const slowdownFactor = Math.min(processingTime / this.adaptivePollingThreshold, 5);
+            adaptiveFrequency = Math.min(this.pollFrequency * slowdownFactor, this.maxPollFrequency);
+            
+            console.log(`🐌 Slow processing detected (${Math.round(processingTime)}ms), polling every ${Math.round(adaptiveFrequency)}ms`);
+        } else if (processingTime < 100) {
+            // Fast processing - can poll more frequently if needed
+            adaptiveFrequency = Math.max(this.minPollFrequency, this.pollFrequency * 0.8);
+        }
+        
+        // Always ensure minimum delay between polls
+        const delay = Math.max(500, adaptiveFrequency);
         
         // Use setTimeout to schedule next poll
         this.pollInterval = setTimeout(() => {
             this.poll();
         }, delay);
+        
+        if (processingTime > 200) {
+            console.log(`📊 Processing: ${Math.round(processingTime)}ms, Next poll in: ${Math.round(delay)}ms`);
+        }
     }
     
     /**
