@@ -913,7 +913,7 @@ function OvermindApp() {
                             React.createElement('input', {
                                 key: 'search',
                                 type: 'text',
-                                placeholder: 'Search output... (Tab/Shift+Tab to navigate)',
+                                placeholder: 'Search output...',
                                 value: searchTerm,
                                 onChange: handleSearchChange,
                                 className: 'filter-input',
