@@ -142,14 +142,22 @@ class UpdateQueue:
         
         with self.lock:
             if last_message_id == 0:
-                # First poll - return recent updates (last 100 messages)
-                relevant_updates = list(self.updates)[-100:]
+                # First poll - return from the beginning of buffer up to limit (100 messages)
+                relevant_updates = list(self.updates)[:100]
             else:
                 # Return updates with message_id > last_message_id
                 relevant_updates = [
                     update for update in self.updates 
                     if update.message_id > last_message_id
                 ]
+            
+            # Determine the next message ID to poll from
+            if relevant_updates:
+                # Next poll should start after the last message we're returning
+                next_message_id = relevant_updates[-1].message_id
+            else:
+                # No updates to return - next poll should start from current position
+                next_message_id = self.message_counter
             
             # Get the latest message ID from all updates
             latest_message_id = self.message_counter
@@ -181,7 +189,7 @@ class UpdateQueue:
             'other_updates': other_updates
         }
         
-        return response_package, latest_message_id
+        return response_package, latest_message_id, next_message_id
     
     def get_current_state(self) -> Dict[str, Any]:
         """Get basic current state (no lines, just metadata)"""
@@ -212,16 +220,6 @@ class UpdateQueue:
             self.process_line_counts.clear()
             # Don't reset message counter - clients need unique IDs across clears
     
-    def get_start_message_id(self) -> int:
-        """Get the starting message ID for new clients to get full buffer history"""
-        with self.lock:
-            if not self.updates:
-                # Empty buffer - start from current position
-                return self.message_counter
-            
-            # Return the oldest message ID in the buffer 
-            # This allows new clients to get the full history
-            return self.updates[0].message_id
     
     def get_stats(self) -> Dict[str, Any]:
         """Get queue statistics"""

@@ -81,7 +81,7 @@ async def poll_updates(request: Request) -> HTTPResponse:
             return response.json({"error": "last_message_id must be >= 0"}, status=400)
         
         # Poll for updates - NEW MESSAGE-BASED FORMAT
-        response_package, latest_message_id = update_queue.poll_updates(last_message_id)
+        response_package, latest_message_id, next_message_id = update_queue.poll_updates(last_message_id)
         
         # Add current stats
         stats = {}
@@ -95,7 +95,7 @@ async def poll_updates(request: Request) -> HTTPResponse:
             "total_lines": response_package['total_lines'],
             "other_updates": response_package['other_updates'],
             "latest_message_id": latest_message_id,  # Current latest message ID
-            "next_poll_message_id": latest_message_id,  # Next ID to poll from (usually latest + 1, but handled by client)
+            "next_poll_message_id": next_message_id,  # Next ID to poll from
             "stats": stats,
             "queue_stats": update_queue.get_stats()
         })
@@ -249,20 +249,6 @@ async def clear_output(request: Request) -> HTTPResponse:
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
 
-
-@api_bp.route("/get-start", methods=["GET"])
-async def get_start_position(request: Request) -> HTTPResponse:
-    """Get the starting message ID for new clients to get full buffer"""
-    try:
-        start_message_id = update_queue.get_start_message_id()
-        
-        return response.json({
-            "start_message_id": start_message_id,
-            "message": f"Start polling from message ID {start_message_id}"
-        })
-        
-    except Exception as e:
-        return response.json({"error": str(e)}, status=500)
 
 
 @api_bp.route("/status", methods=["GET"])

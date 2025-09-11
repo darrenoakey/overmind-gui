@@ -26,51 +26,20 @@ class PollingManager {
     /**
      * Start polling for updates
      */
-    async start() {
+    start() {
         if (this.isPolling) {
             return;
         }
         
-        console.log('Starting polling with buffer-aware initialization');
+        console.log('Starting polling from beginning (lastMessageId=0)');
         this.isPolling = true;
         this.retryCount = 0;
         
-        try {
-            // Get the starting position from the buffer
-            await this.initializeStartingPosition();
-            
-            // Start with immediate poll
-            this.poll();
-        } catch (error) {
-            console.error('Failed to initialize starting position:', error);
-            // Fall back to polling from current position
-            this.lastMessageId = 0;
-            this.poll();
-        }
-    }
-    
-    /**
-     * Initialize the starting message ID from server buffer
-     */
-    async initializeStartingPosition() {
-        try {
-            const response = await fetch('/api/get-start');
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            
-            const data = await response.json();
-            
-            // Start polling from one before the oldest message to ensure we get everything
-            this.lastMessageId = Math.max(0, data.start_message_id - 1);
-            
-            console.log(`Initialized polling from message ID ${this.lastMessageId} (buffer starts at ${data.start_message_id})`);
-            
-        } catch (error) {
-            console.error('Error getting start position:', error);
-            throw error;
-        }
+        // Always start polling from 0 to get full buffer
+        this.lastMessageId = 0;
+        
+        // Start with immediate poll
+        this.poll();
     }
     
     /**
