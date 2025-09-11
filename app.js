@@ -142,6 +142,34 @@ function OvermindApp() {
         searchStateRef.current = { searchTerm, isSearchActive };
     }, [searchTerm, isSearchActive]);
     
+    // Keyboard navigation for search results
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            // Only handle Tab navigation when search is active
+            if (!isSearchActive || searchResults.length === 0) return;
+            
+            if (e.key === 'Tab') {
+                e.preventDefault(); // Prevent default tab behavior
+                
+                if (e.shiftKey) {
+                    // Shift+Tab = previous result
+                    goToPrevSearchResult();
+                } else {
+                    // Tab = next result
+                    goToNextSearchResult();
+                }
+            }
+        };
+        
+        // Add event listener to document
+        document.addEventListener('keydown', handleKeyDown);
+        
+        // Cleanup
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [isSearchActive, searchResults.length, goToNextSearchResult, goToPrevSearchResult]);
+    
     const fetchVersion = async () => {
         try {
             const response = await fetch('/api/state');
@@ -667,7 +695,7 @@ function OvermindApp() {
     };
     
     // Search navigation functions
-    const goToNextSearchResult = () => {
+    const goToNextSearchResult = useCallback(() => {
         if (searchResults.length === 0) return;
         
         const nextIndex = (currentSearchIndex + 1) % searchResults.length;
@@ -682,9 +710,9 @@ function OvermindApp() {
                 align: 'center'
             });
         }
-    };
+    }, [searchResults, currentSearchIndex]);
     
-    const goToPrevSearchResult = () => {
+    const goToPrevSearchResult = useCallback(() => {
         if (searchResults.length === 0) return;
         
         const prevIndex = currentSearchIndex <= 0 ? searchResults.length - 1 : currentSearchIndex - 1;
@@ -699,7 +727,7 @@ function OvermindApp() {
                 align: 'center'
             });
         }
-    };
+    }, [searchResults, currentSearchIndex]);
     
     const handleSelectAll = async () => {
         console.log('Select All clicked');
@@ -885,7 +913,7 @@ function OvermindApp() {
                             React.createElement('input', {
                                 key: 'search',
                                 type: 'text',
-                                placeholder: 'Search output...',
+                                placeholder: 'Search output... (Tab/Shift+Tab to navigate)',
                                 value: searchTerm,
                                 onChange: handleSearchChange,
                                 className: 'filter-input',
@@ -948,7 +976,7 @@ function OvermindApp() {
                                 marginBottom: '0.5rem'
                             }
                         }, searchResults.length === 0 ? 'No results' : 
-                           `${currentSearchIndex + 1} of ${searchResults.length}`) : null
+                           `${currentSearchIndex + 1} of ${searchResults.length} (Tab/Shift+Tab)`) : null
                     ])
                 ]),
                 
