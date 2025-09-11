@@ -106,6 +106,8 @@ function OvermindApp() {
     const [autoScroll, setAutoScroll] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterText, setFilterText] = useState('');
+    const [debouncedFilterText, setDebouncedFilterText] = useState('');
+    const [isFiltering, setIsFiltering] = useState(false);
     const [version, setVersion] = useState('');
     
     // Search-specific state
@@ -141,6 +143,20 @@ function OvermindApp() {
     useEffect(() => {
         searchStateRef.current = { searchTerm, isSearchActive };
     }, [searchTerm, isSearchActive]);
+    
+    // Debounce filter text to prevent expensive re-filtering on every keystroke
+    useEffect(() => {
+        if (filterText !== debouncedFilterText) {
+            setIsFiltering(true);
+        }
+        
+        const timer = setTimeout(() => {
+            setDebouncedFilterText(filterText);
+            setIsFiltering(false);
+        }, 300); // 300ms debounce
+        
+        return () => clearTimeout(timer);
+    }, [filterText, debouncedFilterText]);
     
     const fetchVersion = async () => {
         try {
@@ -333,16 +349,19 @@ function OvermindApp() {
     // Build filtered lines from single list - much faster than per-process approach
     const filteredLines = useMemo(() => {
         // Step 1: Filter by selected processes and text filter (single pass)
+        // Pre-compute filter values for performance
+        const filterLower = debouncedFilterText ? debouncedFilterText.toLowerCase() : null;
+        
         const selectedLines = allLines.filter(line => {
             const processName = line.processName || 'unknown';
             const processInfo = processes[processName];
             const isSelected = processInfo?.selected !== false;
             
-            // Check process selection
+            // Check process selection first (faster check)
             if (!isSelected) return false;
             
-            // Check text filter
-            if (filterText && !line.htmlContent.toLowerCase().includes(filterText.toLowerCase())) {
+            // Check text filter (using pre-computed lowercase filter)
+            if (filterLower && !line.htmlContent.toLowerCase().includes(filterLower)) {
                 return false;
             }
             
@@ -375,7 +394,7 @@ function OvermindApp() {
         lastProcessSelection.current = currentProcessSelection;
         console.log(`Display updated: ${newResult.length} lines from ${allLines.length} total lines`);
         return newResult;
-    }, [allLines, processes, filterText, autoScroll]);
+    }, [allLines, processes, debouncedFilterText, autoScroll]);
     
     
     // Highlight search term in HTML content
@@ -401,16 +420,19 @@ function OvermindApp() {
         }
         
         // Get current filtered lines at search time to avoid dependency issues
+        // Pre-compute filter for performance
+        const filterLower = debouncedFilterText ? debouncedFilterText.toLowerCase() : null;
+        
         const currentFilteredLines = allLines.filter(line => {
             const processName = line.processName || 'unknown';
             const processInfo = processes[processName];
             const isSelected = processInfo?.selected !== false;
             
-            // Check process selection
+            // Check process selection first (faster)
             if (!isSelected) return false;
             
-            // Check text filter
-            if (filterText && !line.htmlContent.toLowerCase().includes(filterText.toLowerCase())) {
+            // Check text filter (using pre-computed lowercase filter)
+            if (filterLower && !line.htmlContent.toLowerCase().includes(filterLower)) {
                 return false;
             }
             
@@ -468,7 +490,7 @@ function OvermindApp() {
                 return finalIndex;
             });
         }
-    }, [allLines, processes, filterText, highlightSearchTerm]); // More stable dependencies
+    }, [allLines, processes, debouncedFilterText, highlightSearchTerm]); // More stable dependencies
     
     // Debounced search effect - ONLY depends on searchTerm
     useEffect(() => {
@@ -898,11 +920,15 @@ function OvermindApp() {
                         React.createElement('input', {
                             key: 'filter',
                             type: 'text',
-                            placeholder: 'Filter output...',
+                            placeholder: isFiltering ? 'Filtering...' : 'Filter output...',
                             value: filterText,
                             onChange: handleFilterChange,
                             className: 'filter-input',
-                            style: { marginBottom: '0.5rem' }
+                            style: { 
+                                marginBottom: '0.5rem',
+                                opacity: isFiltering ? 0.7 : 1.0,
+                                backgroundColor: isFiltering ? '#fffbf0' : ''
+                            }
                         }),
                         // Search input container
                         React.createElement('div', {
