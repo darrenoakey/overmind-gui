@@ -145,3 +145,7 @@ dmypy.json
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Project-specific directories (per CLAUDE.md standards)
+output/
+local/

@@ -9,7 +9,11 @@
       "WebFetch(domain:app.unpkg.com)",
       "WebFetch(domain:cdn.jsdelivr.net)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(chmod:*)",
+      "Bash(./run help)",
+      "Bash(./run test constants)",
+      "Bash(./run:*)"
     ],
     "deny": [],
     "ask": []

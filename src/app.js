@@ -28,7 +28,7 @@ class DataProcessor {
     async init() {
         return new Promise((resolve, reject) => {
             try {
-                this.worker = new Worker('/data-processor.worker.js');
+                this.worker = new Worker('/src/data-processor.worker.js');
                 
                 this.worker.onmessage = (e) => {
                     this.handleWorkerMessage(e.data);

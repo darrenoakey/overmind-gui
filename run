@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""
+Overmind GUI Web Application Runner
+
+This script provides access to all application functionality including:
+- Running the web server
+- Running tests
+- Development commands
+- Deployment commands
+
+Usage:
+    ./run [command] [options]
+
+Commands:
+    server          Start the web server (default)
+    test           Run all tests
+    test <module>  Run tests for specific module
+    lint           Run linting
+    setup          Install dependencies and setup
+    dev            Start development server with debug
+    help           Show this help message
+
+Examples:
+    ./run                    # Start web server
+    ./run server             # Start web server
+    ./run test               # Run all tests
+    ./run test utils         # Run tests for utils module
+    ./run lint               # Run linting
+    ./run setup              # Install dependencies
+    ./run dev                # Start with debug mode
+"""
+
+import sys
+import os
+import subprocess
+import argparse
+from pathlib import Path
+
+# Add current directory to Python path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+def setup_dependencies():
+    """Install Python dependencies"""
+    print("Setting up dependencies...")
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
+                      check=True)
+        print("✓ Dependencies installed successfully")
+    except subprocess.CalledProcessError as e:
+        print(f"✗ Failed to install dependencies: {e}")
+        sys.exit(1)
+
+def run_server(debug=False):
+    """Start the web server"""
+    print("Starting Overmind GUI Web Server...")
+
+    # Check if main.py exists
+    if not os.path.exists("main.py"):
+        print("✗ main.py not found")
+        sys.exit(1)
+
+    try:
+        env = os.environ.copy()
+        if debug:
+            env['DEBUG'] = '1'
+            print("Debug mode enabled")
+
+        subprocess.run([sys.executable, "main.py"], env=env, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"✗ Server failed to start: {e}")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\n✓ Server stopped")
+
+def run_tests(module=None):
+    """Run tests"""
+    if module:
+        run_specific_test(module)
+    else:
+        run_all_tests()
+
+def run_all_tests():
+    """Run all JavaScript tests"""
+    print("Running all tests...")
+
+    src_dir = Path("src")
+    test_files = list(src_dir.glob("*_test.js"))
+
+    if not test_files:
+        print("No test files found in src/")
+        return
+
+    total_tests = len(test_files)
+    passed_tests = 0
+    failed_tests = 0
+
+    for test_file in sorted(test_files):
+        print(f"\n--- Running {test_file.name} ---")
+        try:
+            # Run test using Node.js (if available)
+            if os.system("command -v node > /dev/null 2>&1") == 0:
+                result = subprocess.run(
+                    ["node", "--experimental-modules", str(test_file)],
+                    capture_output=True,
+                    text=True,
+                    cwd=src_dir.parent
+                )
+
+                if result.returncode == 0:
+                    print(result.stdout)
+                    passed_tests += 1
+                else:
+                    print(f"✗ {test_file.name} failed:")
+                    print(result.stderr)
+                    failed_tests += 1
+            else:
+                print(f"⚠ Skipping {test_file.name} (Node.js not available)")
+
+        except Exception as e:
+            print(f"✗ Error running {test_file.name}: {e}")
+            failed_tests += 1
+
+    print(f"\n--- Test Summary ---")
+    print(f"Total tests: {total_tests}")
+    print(f"Passed: {passed_tests}")
+    print(f"Failed: {failed_tests}")
+
+    if failed_tests > 0:
+        sys.exit(1)
+
+def run_specific_test(module_name):
+    """Run tests for a specific module"""
+    print(f"Running tests for {module_name}...")
+
+    test_file = Path(f"src/{module_name}_test.js")
+
+    if not test_file.exists():
+        print(f"✗ Test file not found: {test_file}")
+        sys.exit(1)
+
+    try:
+        if os.system("command -v node > /dev/null 2>&1") == 0:
+            result = subprocess.run(
+                ["node", "--experimental-modules", str(test_file)],
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode == 0:
+                print(result.stdout)
+                print(f"✓ {module_name} tests passed")
+            else:
+                print(f"✗ {module_name} tests failed:")
+                print(result.stderr)
+                sys.exit(1)
+        else:
+            print("⚠ Node.js not available, cannot run JavaScript tests")
+
+    except Exception as e:
+        print(f"✗ Error running {module_name} tests: {e}")
+        sys.exit(1)
+
+def run_lint():
+    """Run linting on Python files"""
+    print("Running linting...")
+
+    python_files = []
+    for ext in ['*.py']:
+        python_files.extend(Path('.').glob(ext))
+
+    if not python_files:
+        print("No Python files found to lint")
+        return
+
+    # Try flake8 first, then pylint
+    linters = ['flake8', 'pylint']
+
+    for linter in linters:
+        if os.system(f"command -v {linter} > /dev/null 2>&1") == 0:
+            print(f"Running {linter}...")
+            try:
+                subprocess.run([linter] + [str(f) for f in python_files], check=True)
+                print(f"✓ {linter} passed")
+                break
+            except subprocess.CalledProcessError as e:
+                print(f"✗ {linter} failed: {e}")
+                sys.exit(1)
+    else:
+        print("⚠ No linters (flake8, pylint) available")
+
+def show_help():
+    """Show help message"""
+    print(__doc__)
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(description='Overmind GUI Web Application Runner')
+    parser.add_argument('command', nargs='?', default='server',
+                       help='Command to run (server, test, lint, setup, dev, help)')
+    parser.add_argument('module', nargs='?',
+                       help='Module name (for test command)')
+
+    args = parser.parse_args()
+
+    if args.command == 'server':
+        run_server()
+    elif args.command == 'test':
+        run_tests(args.module)
+    elif args.command == 'lint':
+        run_lint()
+    elif args.command == 'setup':
+        setup_dependencies()
+    elif args.command == 'dev':
+        run_server(debug=True)
+    elif args.command == 'help':
+        show_help()
+    else:
+        print(f"Unknown command: {args.command}")
+        show_help()
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()
