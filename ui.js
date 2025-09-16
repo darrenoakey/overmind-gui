@@ -48,18 +48,12 @@ class UIManager {
         this.updatePollingIndicator('disconnected');
         this.updateAutoScrollButton();
         this.startScrollMonitoring();
+
+        // Initialize search buttons as disabled
+        this.elements.searchUpBtn.disabled = true;
+        this.elements.searchDownBtn.disabled = true;
     }
     
-    /**
-     * Create a debounce function with its own timer
-     */
-    debounce(func, wait) {
-        let timeoutId;
-        return (...args) => {
-            clearTimeout(timeoutId);
-            timeoutId = setTimeout(() => func.apply(this, args), wait);
-        };
-    }
     
     /**
      * Bind DOM elements
@@ -116,15 +110,21 @@ class UIManager {
         this.elements.shutdownBtn.addEventListener('click', () => this.shutdownOvermind());
         
         // Filter input - debounced, no button
-        const debouncedFilter = this.debounce((value) => this.applyFilter(value), 300);
         this.elements.filterInput.addEventListener('input', (e) => {
-            debouncedFilter(e.target.value);
+            // Clear existing filter timer and set new one
+            if (this.filterDebounceTimer) {
+                clearTimeout(this.filterDebounceTimer);
+            }
+            this.filterDebounceTimer = setTimeout(() => this.applyFilter(e.target.value), 300);
         });
-        
+
         // Search input - debounced
-        const debouncedSearch = this.debounce((value) => this.performSearch(value), 300);
         this.elements.searchInput.addEventListener('input', (e) => {
-            debouncedSearch(e.target.value);
+            // Clear existing search timer and set new one
+            if (this.searchDebounceTimer) {
+                clearTimeout(this.searchDebounceTimer);
+            }
+            this.searchDebounceTimer = setTimeout(() => this.performSearch(e.target.value), 300);
         });
         
         // Search navigation buttons
@@ -433,9 +433,15 @@ class UIManager {
     updateSearchResults() {
         if (this.searchMatches.length === 0) {
             this.elements.searchResultsText.textContent = this.isSearchActive ? 'No matches' : '';
+            // Disable navigation buttons when no matches
+            this.elements.searchUpBtn.disabled = true;
+            this.elements.searchDownBtn.disabled = true;
         } else {
-            this.elements.searchResultsText.textContent = 
+            this.elements.searchResultsText.textContent =
                 `${this.currentSearchIndex + 1} of ${this.searchMatches.length} matches`;
+            // Enable navigation buttons when there are matches
+            this.elements.searchUpBtn.disabled = false;
+            this.elements.searchDownBtn.disabled = false;
         }
     }
     
