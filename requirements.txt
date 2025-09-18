@@ -2,3 +2,10 @@
 sanic
 pywebview
 psutil
+
+# Optional testing dependencies (for integration tests)
+# Install with: pip install playwright selenium aiohttp requests
+# playwright
+# selenium
+# aiohttp
+# requests

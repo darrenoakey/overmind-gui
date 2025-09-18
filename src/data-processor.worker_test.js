@@ -32,7 +32,7 @@ function testWorkerCreation() {
     if (typeof Worker !== 'undefined') {
         try {
             // Try to create the worker (this tests the file syntax)
-            const worker = new Worker('/src/data-processor.worker.js');
+            const worker = new Worker('/data-processor.worker.js');
             worker.terminate(); // Clean up immediately
             console.log('✓ Worker creation test passed');
         } catch (error) {

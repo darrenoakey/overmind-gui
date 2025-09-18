@@ -13,27 +13,26 @@ from sanic.exceptions import NotFound
 def setup_static_routes(app: Sanic):
     """Setup routes for serving static files"""
 
-    # Get the directory where this script is located
-    script_dir = os.path.dirname(__file__)
+    # All static files are now in src/ directory
+    # Get the absolute directory where this script is located (src/)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
 
     @app.route("/")
     @app.route("/index.html", name="index_html")
     async def index(_request):
         """Serve the high-performance HTML page"""
         try:
-            return await file(os.path.join(script_dir, "index.html"),
-                             mime_type="text/html")
+            return await file(os.path.join(script_dir, "index.html"), mime_type="text/html")
         except FileNotFoundError as exc:
             raise NotFound("index.html not found") from exc
     
     # Legacy route for old version (if needed for debugging)
     @app.route("/v1", name="index_v1")
-    @app.route("/old.html", name="index_old") 
+    @app.route("/old.html", name="index_old")
     async def index_old(_request):
         """Serve the old HTML page (legacy)"""
         try:
-            return await file(os.path.join(script_dir, "index.html"),
-                             mime_type="text/html")
+            return await file(os.path.join(script_dir, "index.html"), mime_type="text/html")
         except FileNotFoundError as exc:
             raise NotFound("index.html not found") from exc
 
@@ -41,8 +40,7 @@ def setup_static_routes(app: Sanic):
     async def styles(_request):
         """Serve CSS file"""
         try:
-            return await file(os.path.join(script_dir, "styles.css"),
-                             mime_type="text/css")
+            return await file(os.path.join(script_dir, "styles.css"), mime_type="text/css")
         except FileNotFoundError:
             return text("/* CSS file not found */", content_type="text/css", status=404)
 
@@ -50,8 +48,8 @@ def setup_static_routes(app: Sanic):
     async def app_js(_request):
         """Serve main JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "app.js"),
-                             mime_type="application/javascript")
+            app_js_path = os.path.join(script_dir, "app.js")
+            return await file(app_js_path, mime_type="application/javascript")
         except FileNotFoundError:
             return text("// app.js file not found",
                        content_type="application/javascript", status=404)
@@ -171,7 +169,9 @@ def setup_static_routes(app: Sanic):
     async def favicon(_request):
         """Serve favicon or return 404"""
         try:
-            return await file(os.path.join(script_dir, "favicon.ico"),
+            # Favicon should be in parent directory (root)
+            root_dir = os.path.dirname(script_dir)
+            return await file(os.path.join(root_dir, "favicon.ico"),
                              mime_type="image/x-icon")
         except FileNotFoundError as exc:
             raise NotFound("Favicon not available") from exc

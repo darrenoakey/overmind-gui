@@ -72,9 +72,10 @@ def find_available_port(start_port=DEFAULT_PORT_START, max_attempts=100):
 # -----------------------------------------------------------------------------
 def get_and_increment_version():
     """Read current version, increment it, and return the new version"""
-    # Get version file relative to script location, not current directory
+    # Get version file in the parent directory (root)
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    version_file = os.path.join(script_dir, "version.txt")
+    root_dir = os.path.dirname(script_dir)
+    version_file = os.path.join(root_dir, "version.txt")
     
     try:
         if os.path.exists(version_file):
@@ -190,8 +191,52 @@ setup_api_routes(app)
 async def shutdown_server(request):
     """Shutdown the Sanic server"""
     try:
-        # Schedule server stop
-        request.app.add_task(lambda: request.app.stop())
+        # Set shutdown flags first
+        request.app.ctx.shutdown_initiated = True
+        shutdown_event.set()
+
+        # Schedule graceful shutdown with delay to allow cleanup
+        async def graceful_shutdown():
+            print("🛑 Graceful shutdown initiated...")
+
+            # Stop overmind first if it's running
+            if request.app.ctx.overmind_controller:
+                print("🛑 Stopping overmind controller...")
+                try:
+                    await request.app.ctx.overmind_controller.stop()
+                    print("✅ Overmind controller stopped")
+                except Exception as e:
+                    print(f"❌ Error stopping overmind: {e}")
+                finally:
+                    request.app.ctx.overmind_controller = None
+
+            # Cancel background tasks cleanly
+            if request.app.ctx.tasks:
+                print("🛑 Cancelling background tasks...")
+
+                # First cancel all tasks
+                for task in request.app.ctx.tasks:
+                    if not task.done():
+                        task.cancel()
+
+                # Then wait for all cancellations to complete
+                if request.app.ctx.tasks:
+                    try:
+                        await asyncio.gather(*request.app.ctx.tasks, return_exceptions=True)
+                    except Exception:
+                        pass  # Cancellations can raise exceptions, that's expected
+
+                request.app.ctx.tasks.clear()
+                print("✅ Background tasks cleaned up")
+
+            # Mark cleanup as complete
+            request.app.ctx.shutdown_complete = True
+
+            # Now stop the server
+            print("🛑 Stopping Sanic server...")
+            request.app.stop()
+
+        request.app.add_task(graceful_shutdown())
         return response.json({"success": True, "message": "Server shutdown initiated"})
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
@@ -478,60 +523,19 @@ async def launch_ui(_app, _loop):
 
 @app.before_server_stop
 async def cleanup(app_instance, _loop):
-    """Clean up remaining resources - overmind should already be stopped by message chain"""
+    """Final cleanup - should be minimal since main cleanup happens in shutdown endpoint"""
     if app_instance.ctx.shutdown_complete:
-        print("⚠️  Cleanup already completed - skipping duplicate cleanup")
+        print("✅ Clean shutdown - all resources already cleaned up")
         return
 
-    print("\n" + "="*70)
-    print("🧹 FINAL SERVER CLEANUP (Message 3)")
-    print("="*70)
-    
+    print("\n⚠️  [FALLBACK CLEANUP] Cleanup not completed by shutdown endpoint")
+    print("🧹 Performing minimal fallback cleanup...")
+
+    # Only do essential cleanup that can't fail
     app_instance.ctx.running = False
-
-    # Overmind should already be stopped by the message chain, but check just in case
-    if app_instance.ctx.overmind_controller:
-        print("⚠️  [CLEANUP] Overmind controller still present - stopping as fallback...")
-        try:
-            await app_instance.ctx.overmind_controller.stop()
-            print("✅ [CLEANUP] Fallback overmind stop completed")
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            print(f"❌ [CLEANUP] Fallback overmind stop failed: {e}")
-        finally:
-            app_instance.ctx.overmind_controller = None
-    else:
-        print("✅ [CLEANUP] Overmind already stopped by message chain")
-
-    # Cancel background tasks
-    print("\n🧹 [CLEANUP] Cancelling background tasks...")
-    if app_instance.ctx.tasks:
-        for i, task in enumerate(app_instance.ctx.tasks):
-            if not task.done():
-                print(f"🔄 [TASK {i+1}/{len(app_instance.ctx.tasks)}] Cancelling...")
-                task.cancel()
-            else:
-                print(f"✅ [TASK {i+1}/{len(app_instance.ctx.tasks)}] Already completed")
-
-        # Wait briefly for tasks to complete
-        print("⏳ [CLEANUP] Waiting for background tasks...")
-        for i, task in enumerate(app_instance.ctx.tasks):
-            try:
-                await asyncio.wait_for(task, timeout=5.0)
-                print(f"✅ [TASK {i+1}] Completed")
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                print(f"✅ [TASK {i+1}] Cancelled/Timed out")
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                print(f"⚠️  [TASK {i+1}] Error: {e}")
-    else:
-        print("✅ [CLEANUP] No background tasks to cancel")
-
-    app_instance.ctx.tasks.clear()
     app_instance.ctx.shutdown_complete = True
-    
-    print("\n" + "="*70)
-    print("✅ FINAL CLEANUP COMPLETED")
-    print("🏁 APPLICATION SHUTDOWN SEQUENCE FINISHED")
-    print("="*70)
+
+    print("✅ Fallback cleanup completed")
 
 
 # -----------------------------------------------------------------------------

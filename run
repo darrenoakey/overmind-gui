@@ -12,7 +12,10 @@ Usage:
     ./run [command] [options]
 
 Commands:
-    server          Start the web server (default)
+    server          Start the web server (default - looks for Procfile in current dir)
+    server <path>   Start the web server from a specific directory (looks for Procfile there)
+    test_proc       Run server with demo Procfile for testing (copies to output/test-run)
+    integration     Run full integration test (requires: pip install playwright selenium)
     test           Run all tests
     test <module>  Run tests for specific module
     lint           Run linting
@@ -21,13 +24,16 @@ Commands:
     help           Show this help message
 
 Examples:
-    ./run                    # Start web server
-    ./run server             # Start web server
-    ./run test               # Run all tests
-    ./run test utils         # Run tests for utils module
-    ./run lint               # Run linting
-    ./run setup              # Install dependencies
-    ./run dev                # Start with debug mode
+    ./run                           # Start web server, use current dir's Procfile
+    ./run server                    # Start web server, use current dir's Procfile
+    ./run server /path/to/real/app  # Start web server, use Procfile in /path/to/real/app
+    ./run test_proc                 # Run server with demo Procfile (logs go to output/)
+    ./run integration               # Run full integration test with browser automation
+    ./run test                      # Run all tests
+    ./run test utils                # Run tests for utils module
+    ./run lint                      # Run linting
+    ./run setup                     # Install dependencies
+    ./run dev                       # Start with debug mode
 """
 
 import sys
@@ -50,13 +56,35 @@ def setup_dependencies():
         print(f"✗ Failed to install dependencies: {e}")
         sys.exit(1)
 
-def run_server(debug=False):
+def run_server(debug=False, server_path=None):
     """Start the web server"""
-    print("Starting Overmind GUI Web Server...")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    main_py_path = os.path.join(script_dir, "src", "main.py")
 
-    # Check if main.py exists
-    if not os.path.exists("main.py"):
-        print("✗ main.py not found")
+    if server_path:
+        print(f"Starting Overmind GUI Web Server from {server_path}...")
+        if not os.path.isdir(server_path):
+            print(f"✗ Directory not found: {server_path}")
+            sys.exit(1)
+
+        # Check for Procfile in the target directory
+        procfile_path = os.path.join(server_path, "Procfile")
+        if not os.path.exists(procfile_path):
+            print(f"✗ Procfile not found in {server_path}")
+            sys.exit(1)
+
+        working_dir = server_path
+    else:
+        print("Starting Overmind GUI Web Server from current directory...")
+        if not os.path.exists("Procfile"):
+            print("✗ Procfile not found in current directory")
+            sys.exit(1)
+
+        working_dir = os.getcwd()
+
+    # Always use the main.py from src/
+    if not os.path.exists(main_py_path):
+        print(f"✗ main.py not found at {main_py_path}")
         sys.exit(1)
 
     try:
@@ -65,7 +93,9 @@ def run_server(debug=False):
             env['DEBUG'] = '1'
             print("Debug mode enabled")
 
-        subprocess.run([sys.executable, "main.py"], env=env, check=True)
+        print(f"Working directory: {working_dir}")
+        print(f"Running: {main_py_path}")
+        subprocess.run([sys.executable, main_py_path], env=env, cwd=working_dir, check=True)
     except subprocess.CalledProcessError as e:
         print(f"✗ Server failed to start: {e}")
         sys.exit(1)
@@ -160,6 +190,57 @@ def run_specific_test(module_name):
         print(f"✗ Error running {module_name} tests: {e}")
         sys.exit(1)
 
+def run_test_proc(debug=False):
+    """Run server with demo Procfile for testing"""
+    print("Setting up test run with demo Procfile...")
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    demo_procfile = os.path.join(script_dir, "src", "demo.Procfile")
+
+    if not os.path.exists(demo_procfile):
+        print(f"✗ Demo Procfile not found at {demo_procfile}")
+        sys.exit(1)
+
+    # Create test run directory
+    output_dir = os.path.join(script_dir, "output", "test-run")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Copy demo Procfile to test directory
+    test_procfile = os.path.join(output_dir, "Procfile")
+
+    try:
+        import shutil
+        shutil.copy2(demo_procfile, test_procfile)
+        print(f"✓ Copied demo Procfile to {test_procfile}")
+    except Exception as e:
+        print(f"✗ Failed to copy Procfile: {e}")
+        sys.exit(1)
+
+    print(f"✓ Test run directory: {output_dir}")
+    print(f"✓ Logs and outputs will be saved in {output_dir}")
+    print("✓ Starting server...")
+
+    # Run server from the test directory
+    run_server(debug=debug, server_path=output_dir)
+
+def run_integration_test():
+    """Run the full integration test"""
+    print("Running integration test...")
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    integration_test_path = os.path.join(script_dir, "src", "integration_test.py")
+
+    if not os.path.exists(integration_test_path):
+        print(f"✗ Integration test not found at {integration_test_path}")
+        sys.exit(1)
+
+    try:
+        result = subprocess.run([sys.executable, integration_test_path], check=True)
+        print("✓ Integration test passed")
+    except subprocess.CalledProcessError as e:
+        print(f"✗ Integration test failed: {e}")
+        sys.exit(1)
+
 def run_lint():
     """Run linting on Python files"""
     print("Running linting...")
@@ -197,27 +278,36 @@ def main():
     parser = argparse.ArgumentParser(description='Overmind GUI Web Application Runner')
     parser.add_argument('command', nargs='?', default='server',
                        help='Command to run (server, test, lint, setup, dev, help)')
-    parser.add_argument('module', nargs='?',
-                       help='Module name (for test command)')
+    parser.add_argument('path_or_module', nargs='?',
+                       help='Path (for server command) or module name (for test command)')
 
     args = parser.parse_args()
 
     if args.command == 'server':
-        run_server()
+        run_server(server_path=args.path_or_module)
+    elif args.command == 'test_proc':
+        run_test_proc(debug=False)
+    elif args.command == 'integration':
+        run_integration_test()
     elif args.command == 'test':
-        run_tests(args.module)
+        run_tests(args.path_or_module)
     elif args.command == 'lint':
         run_lint()
     elif args.command == 'setup':
         setup_dependencies()
     elif args.command == 'dev':
-        run_server(debug=True)
+        run_server(debug=True, server_path=args.path_or_module)
     elif args.command == 'help':
         show_help()
     else:
-        print(f"Unknown command: {args.command}")
-        show_help()
-        sys.exit(1)
+        # Check if the "command" is actually a path (for backwards compatibility)
+        if os.path.isdir(args.command):
+            print(f"Detected path as command, starting server from: {args.command}")
+            run_server(server_path=args.command)
+        else:
+            print(f"Unknown command: {args.command}")
+            show_help()
+            sys.exit(1)
 
 if __name__ == '__main__':
     main()
