@@ -189,10 +189,14 @@ function OvermindApp() {
     // Debounce filter text to prevent expensive re-filtering on every keystroke
     useEffect(() => {
         const timer = setTimeout(() => {
+            console.log(`🔧 Filter debounce executing: "${filterText}"`);
             setDebouncedFilterText(filterText);
         }, 300); // 300ms debounce
-        
-        return () => clearTimeout(timer);
+
+        return () => {
+            console.log(`🔧 Filter debounce cleared for: "${filterText}"`);
+            clearTimeout(timer);
+        };
     }, [filterText]);
     
     const fetchVersion = async () => {
@@ -477,10 +481,10 @@ function OvermindApp() {
         return htmlContent.replace(regex, '<mark style="background-color: yellow; color: black;">$1</mark>');
     }, []);
     
-    // Search functionality - separate from filtering  
+    // Search functionality - separate from filtering
     const performSearch = useCallback((term, preserveIndex = false) => {
         console.log(`🔍 performSearch called: term="${term}", preserveIndex=${preserveIndex}`);
-        
+
         if (!term) {
             console.log('🔍 Clearing search results');
             setSearchResults([]);
@@ -489,36 +493,13 @@ function OvermindApp() {
             setAutoScroll(true); // Re-enable autoscroll when search is cleared
             return;
         }
-        
-        // Get current filtered lines at search time to avoid dependency issues
-        // Pre-compute filter for performance
-        const filterLower = debouncedFilterText ? debouncedFilterText.toLowerCase() : null;
-        
-        const currentFilteredLines = allLines.filter(line => {
-            const processName = line.processName || 'unknown';
-            const processInfo = processes[processName];
-            const isSelected = processInfo?.selected !== false;
-            
-            // Check process selection first (faster)
-            if (!isSelected) return false;
-            
-            // Check text filter (using pre-computed lowercase filter)
-            if (filterLower && !line.htmlContent.toLowerCase().includes(filterLower)) {
-                return false;
-            }
-            
-            return true;
-        });
-        
-        // Take the last MAX_DISPLAY_LINES (most recent) - already sorted chronologically
-        const finalFilteredLines = currentFilteredLines.length > MAX_DISPLAY_LINES ? 
-            currentFilteredLines.slice(-MAX_DISPLAY_LINES) : 
-            currentFilteredLines;
-        
+
+        // Use the already computed filteredLines instead of recomputing
+        // This avoids duplicate filtering work and ensures consistency
         const searchLower = term.toLowerCase();
         const results = [];
-        
-        finalFilteredLines.forEach((line, index) => {
+
+        filteredLines.forEach((line, index) => {
             if (line.htmlContent.toLowerCase().includes(searchLower)) {
                 results.push({
                     lineIndex: index,
@@ -527,23 +508,23 @@ function OvermindApp() {
                 });
             }
         });
-        
-        console.log(`🔍 Found ${results.length} search results`);
+
+        console.log(`🔍 Found ${results.length} search results in ${filteredLines.length} filtered lines`);
         setSearchResults(results);
-        
+
         // Only reset index if not preserving or if there are no results
         if (!preserveIndex || results.length === 0) {
             console.log(`🔍 Resetting search index to 0 (preserveIndex=${preserveIndex})`);
             setCurrentSearchIndex(results.length > 0 ? 0 : -1);
             setIsSearchActive(results.length > 0);
-            
+
             // Only disable autoscroll and jump to first result on new searches
             if (results.length > 0) {
                 setAutoScroll(false);
                 setTimeout(() => {
                     if (virtuosoRef.current) {
-                        virtuosoRef.current.scrollToIndex({ 
-                            index: results[0].lineIndex, 
+                        virtuosoRef.current.scrollToIndex({
+                            index: results[0].lineIndex,
                             behavior: 'auto',
                             align: 'center'
                         });
@@ -561,27 +542,35 @@ function OvermindApp() {
                 return finalIndex;
             });
         }
-    }, [allLines, processes, debouncedFilterText, highlightSearchTerm]); // More stable dependencies
+    }, [filteredLines, highlightSearchTerm]); // Simplified and more stable dependencies
     
     // Debounced search effect - ONLY depends on searchTerm
     useEffect(() => {
         console.log(`🔍 Search term changed to: "${searchTerm}"`);
-        
+
         if (searchTimeoutRef.current) {
             clearTimeout(searchTimeoutRef.current);
         }
-        
+
         searchTimeoutRef.current = setTimeout(() => {
             console.log(`🔍 Debounced search executing for: "${searchTerm}"`);
             performSearch(searchTerm, false); // Don't preserve index for new searches
         }, 300); // 300ms debounce
-        
+
         return () => {
             if (searchTimeoutRef.current) {
                 clearTimeout(searchTimeoutRef.current);
             }
         };
-    }, [searchTerm]); // ONLY depend on searchTerm, not performSearch
+    }, [searchTerm]); // ONLY depend on searchTerm to prevent excessive re-runs
+
+    // Update search results when filteredLines change (but only if search is active)
+    useEffect(() => {
+        if (isSearchActive && searchTerm) {
+            console.log(`🔍 Filtered lines changed, updating search results for active search: "${searchTerm}"`);
+            performSearch(searchTerm, true); // Preserve current index when updating
+        }
+    }, [filteredLines, isSearchActive, searchTerm, performSearch]); // This will update search when filter/process selection changes
     
     // Render function for Virtuoso
     const renderLogLine = useCallback((index) => {
@@ -633,13 +622,13 @@ function OvermindApp() {
         const handleProcessClick = (processName) => {
             console.log('Process clicked:', processName);
             console.log('Current processes:', processes);
-            
+
             // Toggle process selection
             const processInfo = processes[processName];
             const isSelected = processInfo?.selected !== false;
-            
+
             console.log('Current selection state:', isSelected, 'toggling to:', !isSelected);
-            
+
             // Update local state optimistically
             setProcesses(prev => {
                 const updated = {
@@ -652,13 +641,42 @@ function OvermindApp() {
                 console.log('Updated processes:', updated);
                 return updated;
             });
-            
+
             // Send to server
             if (pollingManager.current) {
                 console.log('Sending toggle to server');
                 pollingManager.current.toggleProcessSelection(processName);
             } else {
                 console.log('No polling manager available');
+            }
+        };
+
+        const handleProcessDoubleClick = (processName) => {
+            console.log('Process double-clicked - focusing on:', processName);
+
+            // Turn off all processes first, then turn on the target process
+            setProcesses(prev => {
+                const updated = {};
+                Object.keys(prev).forEach(name => {
+                    updated[name] = {
+                        ...prev[name],
+                        selected: name === processName // Only select the double-clicked process
+                    };
+                });
+                console.log('Focus mode - Updated processes:', updated);
+                return updated;
+            });
+
+            // Send focus command to server - deselect all then select target
+            if (pollingManager.current) {
+                console.log('Sending focus command to server');
+                // First deselect all
+                pollingManager.current.deselectAllProcesses().then(() => {
+                    // Then select the target process
+                    return pollingManager.current.toggleProcessSelection(processName);
+                }).catch(error => {
+                    console.error('Error during focus operation:', error);
+                });
             }
         };
         
@@ -694,7 +712,9 @@ function OvermindApp() {
                     key: processName,
                     className: `process-item ${isSelected ? 'selected' : ''}`,
                     onClick: () => handleProcessClick(processName),
-                    style: { cursor: 'pointer' }
+                    onDoubleClick: () => handleProcessDoubleClick(processName),
+                    style: { cursor: 'pointer' },
+                    title: `Click to toggle, Double-click to focus on this process only`
                 }, [
                     // Process info section
                     React.createElement('div', {
