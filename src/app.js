@@ -138,6 +138,7 @@ function OvermindApp() {
     const [isSearchActive, setIsSearchActive] = useState(false);
     
     const [isShuttingDown, setIsShuttingDown] = useState(false);
+    const [isRestarting, setIsRestarting] = useState(false);
     // Refs
     const virtuosoRef = useRef(null);
     const dataProcessor = useRef(null);
@@ -215,11 +216,11 @@ function OvermindApp() {
             const response = await fetch('/api/state');
             const data = await response.json();
             console.log('Initial state data:', data); // Debug log
-            
+
             // Try to get processes from either status_updates or processes field
             const processData = data.status_updates || data.processes || {};
             console.log('Process data:', processData); // Debug log
-            
+
             if (Object.keys(processData).length > 0) {
                 setProcesses(processData);
                 console.log('Set processes:', processData);
@@ -228,6 +229,37 @@ function OvermindApp() {
             }
         } catch (error) {
             console.error('Error loading process list:', error);
+        }
+    };
+
+    const loadProcessesFromDaemon = async () => {
+        try {
+            console.log('🔍 Attempting to load processes from daemon...');
+            const response = await fetch('/api/processes');
+            const data = await response.json();
+
+            if (data.processes && Object.keys(data.processes).length > 0) {
+                console.log(`✅ Loaded ${Object.keys(data.processes).length} processes from daemon:`, Object.keys(data.processes));
+
+                // Add system process (fake process for system messages)
+                const processesWithSystem = {
+                    system: {
+                        name: 'system',
+                        status: null, // No status for system
+                        selected: true // Default to selected
+                    },
+                    ...data.processes
+                };
+
+                setProcesses(processesWithSystem);
+                return true; // Success
+            } else {
+                console.log('⚠️ No processes returned from daemon yet');
+                return false; // No processes yet
+            }
+        } catch (error) {
+            console.log('❌ Error loading processes from daemon:', error.message);
+            return false; // Error
         }
     };
     
@@ -241,6 +273,35 @@ function OvermindApp() {
             
             // Load initial process list
             await loadProcessList();
+
+            // Start daemon process loading with retry logic (since daemon connects later)
+            const startDaemonProcessRetry = async () => {
+                let attempts = 0;
+                const maxAttempts = 20; // Try for 20 attempts (10 seconds)
+                const retryInterval = 500; // 500ms between attempts
+
+                const retry = async () => {
+                    attempts++;
+                    console.log(`🔄 Daemon process loading attempt ${attempts}/${maxAttempts}`);
+
+                    const success = await loadProcessesFromDaemon();
+                    if (success) {
+                        console.log('✅ Successfully loaded processes from daemon!');
+                        return;
+                    }
+
+                    if (attempts < maxAttempts) {
+                        console.log(`⏳ Retrying in ${retryInterval}ms...`);
+                        setTimeout(retry, retryInterval);
+                    } else {
+                        console.log('❌ Max attempts reached. Daemon may not be ready or no processes available.');
+                    }
+                };
+
+                setTimeout(retry, 1000); // Start after 1 second to let daemon initialize
+            };
+
+            startDaemonProcessRetry();
             
             // Set up throttled batch processing to prevent UI freezing with large updates
             let batchedUpdates = [];
@@ -642,10 +703,12 @@ function OvermindApp() {
                 return updated;
             });
 
-            // Send to server
-            if (pollingManager.current) {
+            // Send to server (but not for system process)
+            if (processName !== 'system' && pollingManager.current) {
                 console.log('Sending toggle to server');
                 pollingManager.current.toggleProcessSelection(processName);
+            } else if (processName === 'system') {
+                console.log('System process - no server update needed');
             } else {
                 console.log('No polling manager available');
             }
@@ -680,6 +743,114 @@ function OvermindApp() {
             }
         };
         
+        const handleProcessContextMenu = (e, processName) => {
+            e.preventDefault(); // Prevent default browser context menu
+
+            const isSelected = processes[processName]?.selected !== false;
+
+            // Create context menu
+            const existingMenu = document.querySelector('.context-menu');
+            if (existingMenu) {
+                existingMenu.remove();
+            }
+
+            const menu = document.createElement('div');
+            menu.className = 'context-menu';
+            menu.style.cssText = `
+                position: fixed;
+                left: ${e.clientX}px;
+                top: ${e.clientY}px;
+                z-index: 10000;
+                background: #1a1a1a;
+                border: 1px solid #333;
+                border-radius: 4px;
+                padding: 4px 0;
+                min-width: 120px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            `;
+
+            const menuItems = [
+                { label: 'Focus', action: () => handleProcessDoubleClick(processName) },
+                { separator: true },
+                { label: isSelected ? 'Hide' : 'Show', action: () => handleProcessClick(processName) },
+                { separator: true },
+                { label: 'Clear Output', action: () => clearProcessOutput(processName) }
+            ];
+
+            menuItems.forEach(item => {
+                if (item.separator) {
+                    const separator = document.createElement('div');
+                    separator.style.cssText = 'border-top: 1px solid #333; margin: 4px 0;';
+                    menu.appendChild(separator);
+                } else {
+                    const menuItem = document.createElement('div');
+                    menuItem.textContent = item.label;
+                    menuItem.style.cssText = `
+                        padding: 8px 16px;
+                        cursor: pointer;
+                        color: #ccc;
+                        font-size: 14px;
+                        white-space: nowrap;
+                    `;
+
+                    menuItem.addEventListener('mouseenter', () => {
+                        menuItem.style.backgroundColor = '#2a2a2a';
+                    });
+
+                    menuItem.addEventListener('mouseleave', () => {
+                        menuItem.style.backgroundColor = 'transparent';
+                    });
+
+                    menuItem.addEventListener('click', () => {
+                        item.action();
+                        menu.remove();
+                    });
+
+                    menu.appendChild(menuItem);
+                }
+            });
+
+            document.body.appendChild(menu);
+
+            // Adjust position if menu goes off-screen
+            const rect = menu.getBoundingClientRect();
+            if (rect.right > window.innerWidth) {
+                menu.style.left = `${e.clientX - rect.width}px`;
+            }
+            if (rect.bottom > window.innerHeight) {
+                menu.style.top = `${e.clientY - rect.height}px`;
+            }
+
+            // Click away to close
+            const closeMenu = (event) => {
+                if (!menu.contains(event.target)) {
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu);
+                    document.removeEventListener('contextmenu', closeMenu);
+                }
+            };
+
+            setTimeout(() => {
+                document.addEventListener('click', closeMenu);
+                document.addEventListener('contextmenu', closeMenu);
+            }, 0);
+        };
+
+        const clearProcessOutput = (processName) => {
+            // Clear output lines for this process
+            setOutputLines(prev => prev.filter(line => line.process !== processName));
+
+            // Add a "cleared" marker
+            const clearedLine = {
+                id: Date.now(),
+                process: processName,
+                html: `<span style="color: #666; font-style: italic;">[Output cleared at ${new Date().toLocaleTimeString()}]</span>`,
+                timestamp: Date.now()
+            };
+
+            setOutputLines(prev => [...prev, clearedLine]);
+        };
+
         const handleStartRestartProcess = async (processName, e) => {
             e.stopPropagation();
             try {
@@ -705,7 +876,8 @@ function OvermindApp() {
         
         return React.createElement('div', null,
             processEntries.map(([processName, processInfo]) => {
-                const status = processInfo?.status || processInfo;
+                // Handle both object format {name, status, selected} and simple string format
+                const status = typeof processInfo === 'object' ? processInfo.status : processInfo;
                 const isSelected = processInfo?.selected !== false;
                 
                 return React.createElement('div', {
@@ -713,8 +885,9 @@ function OvermindApp() {
                     className: `process-item ${isSelected ? 'selected' : ''}`,
                     onClick: () => handleProcessClick(processName),
                     onDoubleClick: () => handleProcessDoubleClick(processName),
+                    onContextMenu: (e) => handleProcessContextMenu(e, processName),
                     style: { cursor: 'pointer' },
-                    title: `Click to toggle, Double-click to focus on this process only`
+                    title: `Click to toggle, Double-click to focus, Right-click for menu`
                 }, [
                     // Process info section
                     React.createElement('div', {
@@ -725,7 +898,7 @@ function OvermindApp() {
                             key: 'name',
                             className: 'process-name'
                         }, processName),
-                        React.createElement('span', {
+                        status && React.createElement('span', {
                             key: 'status',
                             className: `process-status ${status}`,
                             style: {
@@ -735,8 +908,8 @@ function OvermindApp() {
                         }, status)
                     ]),
                     
-                    // Process action buttons
-                    React.createElement('div', {
+                    // Process action buttons (not for system process)
+                    processName !== 'system' && React.createElement('div', {
                         key: 'actions',
                         className: 'process-actions'
                     }, [
@@ -877,27 +1050,57 @@ function OvermindApp() {
         try {
             setIsShuttingDown(true);
             console.log('Initiating shutdown...');
-            
+
             const response = await fetch('/api/shutdown', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 }
             });
-            
+
             const result = await response.json();
-            
+
             if (response.ok && result.success) {
                 console.log('Shutdown successful:', result.message);
                 // The server will close the connection
             } else {
                 throw new Error(result.error || `Server returned ${response.status}`);
             }
-            
+
         } catch (error) {
             console.error('Shutdown failed:', error);
             setIsShuttingDown(false);
             // Could show error modal here
+        }
+    };
+
+    const handleRestart = async () => {
+        try {
+            setIsRestarting(true);
+            console.log('Restarting server process...');
+
+            const response = await fetch('/api/restart', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const result = await response.json();
+
+            if (response.ok && result.success) {
+                console.log('Restart successful:', result.message);
+                // The server will restart and the page will lose connection
+                // Show a message to the user
+                alert('Server restarting... Please refresh the page in a few seconds.');
+            } else {
+                throw new Error(result.error || `Server returned ${response.status}`);
+            }
+
+        } catch (error) {
+            console.error('Restart failed:', error);
+            setIsRestarting(false);
+            alert('Restart failed: ' + error.message);
         }
     };
     const handleDeselectAll = async () => {
@@ -987,6 +1190,16 @@ function OvermindApp() {
                         }, autoScroll ? 'ON' : 'OFF')
                     ])
 ,
+                    React.createElement('div', { key: 'restart', className: 'status-item' }, [
+                        React.createElement('button', {
+                            key: 'restart-btn',
+                            id: 'restart-btn',
+                            className: 'btn btn-warning',
+                            onClick: handleRestart,
+                            disabled: isRestarting,
+                            title: 'Restart UI only (keeps overmind running)'
+                        }, isRestarting ? 'Restarting...' : '🔄 Restart')
+                    ]),
                     React.createElement('div', { key: 'shutdown', className: 'status-item' }, [
                         React.createElement('button', {
                             key: 'shutdown-btn',

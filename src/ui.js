@@ -154,6 +154,7 @@ class UIManager {
                 // User scrolled back to bottom - enable auto-scroll
                 this.autoScroll = true;
                 this.updateAutoScrollButton();
+                // No need to scroll since we're already at bottom
                 console.log('Auto-scroll enabled by user scrolling to bottom');
             }
         });
@@ -171,13 +172,15 @@ class UIManager {
     
     
     /**
-     * Enable auto-scroll and scroll to bottom
+     * Enable auto-scroll and ALWAYS scroll to bottom
+     * This is the ONLY way to enable auto-scroll programmatically
+     * (except for the special case of user manually scrolling to bottom)
      */
     enableAutoScroll() {
         this.autoScroll = true;
         this.updateAutoScrollButton();
         this.scrollToBottom();
-        console.log('Auto-scroll enabled');
+        console.log('Auto-scroll enabled and scrolled to bottom');
     }
     
     /**
@@ -255,34 +258,41 @@ class UIManager {
      */
     applyFilter(filterText) {
         const filter = filterText.trim().toLowerCase();
+        const wasFilterActive = this.isFilterActive;
         this.isFilterActive = filter.length > 0;
-        
+
         const lines = this.elements.outputLines.children;
         let visibleCount = 0;
-        
+
         // Batch process all lines
         for (let i = 0; i < lines.length; i++) {
             const lineElement = lines[i];
-            const lineText = lineElement.dataset.cleanText?.toLowerCase() || lineElement.textContent.toLowerCase();
+            const lineText = lineElement.textContent.toLowerCase();
             const shouldBeVisible = !this.isFilterActive || lineText.includes(filter);
-            
+
             // Only modify DOM if class needs to change
             const isCurrentlyHidden = lineElement.classList.contains('filtered-hidden');
-            
+
             if (shouldBeVisible && isCurrentlyHidden) {
                 lineElement.classList.remove('filtered-hidden');
             } else if (!shouldBeVisible && !isCurrentlyHidden) {
                 lineElement.classList.add('filtered-hidden');
             }
-            
+
             // Count visible lines (not hidden by filter AND not hidden by process selection)
             if (shouldBeVisible && !lineElement.classList.contains('process-hidden')) {
                 visibleCount++;
             }
         }
-        
+
         // Update line count once at the end
         this.updateDisplayedLineCount(visibleCount);
+
+        // When clearing filter (going from active to inactive), re-enable auto-scroll
+        if (wasFilterActive && !this.isFilterActive) {
+            this.enableAutoScroll();
+            console.log('Filter cleared - auto-scroll re-enabled');
+        }
     }
     
     /**
@@ -306,7 +316,7 @@ class UIManager {
         const lineElements = this.elements.outputLines.querySelectorAll('.output-line:not(.filtered-hidden)');
         
         lineElements.forEach((lineElement, index) => {
-            const lineText = lineElement.dataset.cleanText?.toLowerCase() || lineElement.textContent.toLowerCase();
+            const lineText = lineElement.textContent.toLowerCase();
             if (lineText.includes(search.toLowerCase())) {
                 this.searchMatches.push({
                     element: lineElement,
@@ -366,7 +376,7 @@ class UIManager {
         this.isSearchActive = false;
         this.searchMatches = [];
         this.currentSearchIndex = -1;
-        
+
         // Remove all highlighting
         const lineElements = this.elements.outputLines.querySelectorAll('.output-line');
         lineElements.forEach(lineElement => {
@@ -375,12 +385,10 @@ class UIManager {
             }
             lineElement.classList.remove('search-current');
         });
-        
-        // Re-enable auto-scroll (search was disabled, now re-enable)
-        this.autoScroll = true;
-        this.updateAutoScrollButton();
-        this.scrollToBottom();
-        
+
+        // Re-enable auto-scroll and scroll to bottom
+        this.enableAutoScroll();
+
         this.updateSearchResults();
     }
     
@@ -539,14 +547,22 @@ class UIManager {
      */
     updateProcesses(processes) {
         this.processes = processes;
-        
+
         // Clear existing process list
         this.elements.processList.innerHTML = '';
-        
-        // Add each process
+
+        // Add system process first (artificially injected for system messages)
+        const systemProcess = {
+            name: 'system',
+            status: null, // No status for system
+            selected: this.selectedProcesses.has('system')
+        };
+        this.addProcessToList(systemProcess);
+
+        // Add each real process
         Object.values(processes).forEach(process => {
             this.addProcessToList(process);
-            
+
             // Update selected processes set
             if (process.selected) {
                 this.selectedProcesses.add(process.name);
@@ -554,7 +570,7 @@ class UIManager {
                 this.selectedProcesses.delete(process.name);
             }
         });
-        
+
         // Update line visibility based on selected processes
         this.updateLineVisibility();
     }
@@ -566,18 +582,28 @@ class UIManager {
         const processItem = document.createElement('div');
         processItem.className = `process-item ${process.selected ? 'selected' : ''}`;
         processItem.dataset.process = process.name;
-        
-        processItem.innerHTML = `
-            <div class="process-info">
-                <span class="process-name">${process.name}</span>
-                <span class="process-status ${process.status}">${process.status}</span>
-            </div>
-            <div class="process-actions">
-                <button class="btn btn-success btn-start" title="Restart">▶</button>
-                <button class="btn btn-danger btn-stop" title="Stop">⏹</button>
-            </div>
-        `;
-        
+
+        // Handle system process specially
+        if (process.name === 'system') {
+            processItem.innerHTML = `
+                <div class="process-info">
+                    <span class="process-name">system</span>
+                    <span class="process-status-placeholder">—</span>
+                </div>
+            `;
+        } else {
+            processItem.innerHTML = `
+                <div class="process-info">
+                    <span class="process-name">${process.name}</span>
+                    <span class="process-status ${process.status}">${process.status}</span>
+                </div>
+                <div class="process-actions">
+                    <button class="btn btn-success btn-start" title="Restart">▶</button>
+                    <button class="btn btn-danger btn-stop" title="Stop">⏹</button>
+                </div>
+            `;
+        }
+
         // Add event listeners
         processItem.addEventListener('click', (e) => {
             // Don't toggle if clicking on action buttons
@@ -586,21 +612,34 @@ class UIManager {
             }
             this.toggleProcessSelection(process.name);
         });
-        
-        // Action button listeners
-        const startBtn = processItem.querySelector('.btn-start');
-        const stopBtn = processItem.querySelector('.btn-stop');
-        
-        startBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.restartProcess(process.name);
-        });
-        
-        stopBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.stopProcess(process.name);
-        });
-        
+
+        // Add double-click handler for process focus (only for non-system processes)
+        if (process.name !== 'system') {
+            processItem.addEventListener('dblclick', (e) => {
+                // Don't focus if clicking on action buttons
+                if (e.target.classList.contains('btn')) {
+                    return;
+                }
+                this.focusOnProcess(process.name);
+            });
+        }
+
+        // Action button listeners (only for non-system processes)
+        if (process.name !== 'system') {
+            const startBtn = processItem.querySelector('.btn-start');
+            const stopBtn = processItem.querySelector('.btn-stop');
+
+            startBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.restartProcess(process.name);
+            });
+
+            stopBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.stopProcess(process.name);
+            });
+        }
+
         this.elements.processList.appendChild(processItem);
     }
     
@@ -608,13 +647,20 @@ class UIManager {
      * Update process status in the list
      */
     updateProcessStatus(processName, status) {
+        // Don't update status for system process (it has no real status)
+        if (processName === 'system') {
+            return;
+        }
+
         const processItem = this.elements.processList.querySelector(`[data-process="${processName}"]`);
         if (processItem) {
             const statusElement = processItem.querySelector('.process-status');
-            statusElement.textContent = status;
-            statusElement.className = `process-status ${status}`;
+            if (statusElement) {
+                statusElement.textContent = status;
+                statusElement.className = `process-status ${status}`;
+            }
         }
-        
+
         // Update in our processes data
         if (this.processes[processName]) {
             this.processes[processName].status = status;
@@ -639,6 +685,11 @@ class UIManager {
         
         // Update all statuses at once
         Object.entries(statusUpdates).forEach(([processName, status]) => {
+            // Skip system process (it has no real status)
+            if (processName === 'system') {
+                return;
+            }
+
             // Update DOM
             const processItem = processItemMap.get(processName);
             if (processItem) {
@@ -648,7 +699,7 @@ class UIManager {
                     statusElement.className = `process-status ${status}`;
                 }
             }
-            
+
             // Update in our processes data
             if (this.processes[processName]) {
                 this.processes[processName].status = status;
@@ -663,16 +714,16 @@ class UIManager {
         // Add to local buffer
         this.currentLines.push(line);
         this.lineIdMap.set(line.id, line);
-        
+
         // Create DOM element
         const lineElement = this.createLineElement(line);
-        
+
         // Check if we need to remove old lines (buffer limit)
         let removedElement = null;
         if (this.currentLines.length > this.maxLines) {
             const removedLine = this.currentLines.shift(); // Remove from start
             this.lineIdMap.delete(removedLine.id);
-            
+
             // Remove corresponding DOM element
             const oldElement = this.elements.outputLines.querySelector(`[data-line-id="${removedLine.id}"]`);
             if (oldElement) {
@@ -680,23 +731,25 @@ class UIManager {
                 oldElement.remove();
             }
         }
-        
+
         // Add new element to bottom
         this.elements.outputLines.appendChild(lineElement);
-        
-        // Auto-scroll if enabled - ALWAYS scroll to bottom when autoscroll is on
+
+        // IMPORTANT: Only scroll if auto-scroll is ON
+        // When auto-scroll is OFF, new content fills the visible area but doesn't scroll
         if (this.autoScroll) {
             this.scrollToBottom();
         }
-        
+        // If auto-scroll is off, do nothing - content just gets added without scrolling
+
         // Update displayed line count (do this for every line to keep count accurate)
         this.updateDisplayedLineCount(this.getVisibleLineCount());
-        
+
         // Update search matches if search is active (but don't re-run full search, just check this line)
         if (this.isSearchActive) {
             const searchTerm = this.elements.searchInput.value.trim();
             if (searchTerm) {
-                const lineText = lineElement.dataset.cleanText?.toLowerCase() || lineElement.textContent.toLowerCase();
+                const lineText = lineElement.textContent.toLowerCase();
                 if (lineText.includes(searchTerm.toLowerCase())) {
                     this.searchMatches.push({
                         element: lineElement,
@@ -752,32 +805,32 @@ class UIManager {
      */
     addOutputLines(lines) {
         if (lines.length === 0) return;
-        
+
         if (lines.length === 1) {
             // Single line - use existing method
             this.addOutputLine(lines[0]);
             return;
         }
-        
+
         // Batch processing for multiple lines
         const fragment = document.createDocumentFragment();
         const elementsToRemove = [];
-        
+
         // Process all lines and build fragment
         for (const line of lines) {
             // Add to local buffer
             this.currentLines.push(line);
             this.lineIdMap.set(line.id, line);
-            
+
             // Create DOM element
             const lineElement = this.createLineElement(line);
             fragment.appendChild(lineElement);
-            
+
             // Track elements to remove if over limit
             if (this.currentLines.length > this.maxLines) {
                 const removedLine = this.currentLines.shift();
                 this.lineIdMap.delete(removedLine.id);
-                
+
                 // Find DOM element to remove
                 const oldElement = this.elements.outputLines.querySelector(`[data-line-id="${removedLine.id}"]`);
                 if (oldElement) {
@@ -785,22 +838,24 @@ class UIManager {
                 }
             }
         }
-        
+
         // Batch DOM operations
         // 1. Remove old elements first
         elementsToRemove.forEach(el => el.remove());
-        
+
         // 2. Add all new elements at once
         this.elements.outputLines.appendChild(fragment);
-        
+
         // 3. Update counts once at the end
         this.updateDisplayedLineCount(this.getVisibleLineCount());
-        
-        // 4. Auto-scroll if enabled
+
+        // 4. IMPORTANT: Only scroll if auto-scroll is ON
+        // When auto-scroll is OFF, new content fills the visible area but doesn't scroll
         if (this.autoScroll) {
             this.scrollToBottom();
         }
-        
+        // If auto-scroll is off, do nothing - content just gets added without scrolling
+
         // 5. Update search matches if needed (batch process)
         if (this.isSearchActive) {
             this.updateSearchMatchesForNewLines(lines);
@@ -812,75 +867,83 @@ class UIManager {
      */
     addPreRenderedLines(preRenderedLines, totalBackendLines) {
         if (preRenderedLines.length === 0) return;
-        
+
         console.log(`Adding ${preRenderedLines.length} pre-rendered lines`);
-        
+
         // 1. Create document fragment for batch DOM insertion
         const fragment = document.createDocumentFragment();
-        
-        // 2. Process each pre-rendered line
+
+        // 2. Process each pre-rendered line (skip duplicates using dictionary)
         preRenderedLines.forEach(lineData => {
-            // lineData = {id, html, clean_text, process, timestamp}
-            
+            // lineData = {id, html, process}
+
+            // Skip if we already have this line ID
+            if (this.lineIdMap.has(lineData.id)) {
+                return;
+            }
+
             const lineElement = document.createElement('div');
             lineElement.className = 'output-line';
             lineElement.dataset.lineId = lineData.id;
             lineElement.dataset.process = lineData.process;
-            lineElement.dataset.timestamp = lineData.timestamp;
-            
+
             // Use pre-rendered HTML directly - NO FRONTEND ANSI PROCESSING!
             lineElement.innerHTML = lineData.html;
-            
-            // Store clean text for search/filter (only when needed)
-            lineElement.dataset.cleanText = lineData.clean_text;
-            
-            // Add to our line tracking
-            this.currentLines.push({
+
+            // Create line object
+            const lineObj = {
                 id: lineData.id,
                 element: lineElement,
-                cleanText: lineData.clean_text,
                 process: lineData.process
-            });
-            
+            };
+
+            // Add to our line tracking (dictionary-based indexing)
+            this.currentLines.push(lineObj);
+            this.lineIdMap.set(lineData.id, lineObj);
+
             // Check if this line should be visible (filter/process selection)
-            const shouldShow = this.shouldShowLine(lineData.process, lineData.clean_text);
+            const shouldShow = this.shouldShowLine(lineData.process, lineData.html);
             if (!shouldShow) {
                 lineElement.classList.add('filtered-hidden');
             }
-            
+
             fragment.appendChild(lineElement);
         });
-        
+
         // 3. Manage line limit efficiently
         if (this.currentLines.length > this.maxLines) {
             const toRemove = this.currentLines.length - this.maxLines;
             console.log(`Removing ${toRemove} old lines to maintain ${this.maxLines} limit`);
-            
-            // Remove old elements from DOM
+
+            // Remove old elements from DOM and dictionary
             for (let i = 0; i < toRemove; i++) {
                 const oldLine = this.currentLines[i];
                 if (oldLine.element && oldLine.element.parentNode) {
                     oldLine.element.parentNode.removeChild(oldLine.element);
                 }
+                // Remove from dictionary when clearing
+                this.lineIdMap.delete(oldLine.id);
             }
-            
+
             // Remove from our tracking
             this.currentLines.splice(0, toRemove);
         }
-        
+
         // 4. Add all new lines to DOM at once
         this.elements.outputLines.appendChild(fragment);
-        
-        // 5. Auto-scroll if enabled
+
+        // 5. IMPORTANT: Only scroll if auto-scroll is ON
+        // When auto-scroll is OFF, new content fills the visible area but doesn't scroll
         if (this.autoScroll) {
             this.scrollToBottom();
         }
-        
+        // If auto-scroll is off, do nothing - content just gets added without scrolling
+
         // 6. Update search matches ONLY if search is active
         if (this.isSearchActive) {
             this.updateSearchMatchesForPreRenderedLines(preRenderedLines);
         }
-        
+
         // 7. Update line count
         this.updateDisplayedLineCount(this.getVisibleLineCount());
     }
@@ -888,20 +951,20 @@ class UIManager {
     /**
      * Check if a line should be shown based on current filters
      */
-    shouldShowLine(processName, cleanText) {
+    shouldShowLine(processName, htmlContent) {
         // Check process selection
         if (this.processes[processName] && !this.processes[processName].selected) {
             return false;
         }
-        
-        // Check text filter
+
+        // Check text filter - search directly in HTML content
         if (this.isFilterActive) {
             const filterText = this.elements.filterInput.value.trim().toLowerCase();
-            if (filterText && !cleanText.toLowerCase().includes(filterText)) {
+            if (filterText && !htmlContent.toLowerCase().includes(filterText)) {
                 return false;
             }
         }
-        
+
         return true;
     }
     
@@ -912,9 +975,9 @@ class UIManager {
         const searchTerm = this.elements.searchInput.value.trim().toLowerCase();
         if (!searchTerm) return;
         
-        // Process new lines for search matches using pre-processed clean text
+        // Process new lines for search matches directly in HTML content
         preRenderedLines.forEach(lineData => {
-            if (lineData.clean_text.toLowerCase().includes(searchTerm)) {
+            if (lineData.html.toLowerCase().includes(searchTerm)) {
                 const lineElement = this.elements.outputLines.querySelector(`[data-line-id="${lineData.id}"]`);
                 if (lineElement && !lineElement.classList.contains('filtered-hidden')) {
                     this.searchMatches.push(lineElement);
@@ -936,7 +999,7 @@ class UIManager {
         lines.forEach(line => {
             const lineElement = this.elements.outputLines.querySelector(`[data-line-id="${line.id}"]`);
             if (lineElement) {
-                const lineText = lineElement.dataset.cleanText?.toLowerCase() || lineElement.textContent.toLowerCase();
+                const lineText = lineElement.textContent.toLowerCase();
                 if (lineText.includes(searchTerm)) {
                     this.searchMatches.push({
                         element: lineElement,
@@ -1000,7 +1063,7 @@ class UIManager {
         try {
             if (window.pollingManager) {
                 const result = await window.pollingManager.toggleProcessSelection(processName);
-                
+
                 if (result.success) {
                     // Update UI immediately
                     const processItem = this.elements.processList.querySelector(`[data-process="${processName}"]`);
@@ -1008,12 +1071,16 @@ class UIManager {
                         if (result.selected) {
                             processItem.classList.add('selected');
                             this.selectedProcesses.add(processName);
+
+                            // When toggling a process ON, enable auto-scroll and scroll to bottom
+                            this.enableAutoScroll();
+                            console.log(`Process ${processName} enabled - auto-scroll activated`);
                         } else {
                             processItem.classList.remove('selected');
                             this.selectedProcesses.delete(processName);
                         }
                     }
-                    
+
                     // Update line visibility
                     this.updateLineVisibility();
                 }
@@ -1023,7 +1090,55 @@ class UIManager {
             this.showError('Failed to toggle process: ' + error.message, error);
         }
     }
-    
+
+    /**
+     * Focus on a single process (disable all others, enable this one)
+     */
+    async focusOnProcess(processName) {
+        try {
+            console.log('Process double-clicked - focusing on:', processName);
+
+            // First, deselect all processes in the UI
+            this.selectedProcesses.clear();
+
+            // Update all process items UI to deselected state
+            const allProcessItems = this.elements.processList.querySelectorAll('.process-item');
+            allProcessItems.forEach(item => {
+                item.classList.remove('selected');
+            });
+
+            // Use the polling manager to properly focus (like the React version does)
+            if (window.pollingManager) {
+                // Call the API to deselect all, then select target
+                await window.pollingManager.deselectAllProcesses();
+
+                // Then select only the target process
+                const result = await window.pollingManager.toggleProcessSelection(processName);
+
+                if (result && result.success) {
+                    // Update UI for the focused process
+                    const processItem = this.elements.processList.querySelector(`[data-process="${processName}"]`);
+                    if (processItem) {
+                        processItem.classList.add('selected');
+                        this.selectedProcesses.add(processName);
+                    }
+
+                    // Update line visibility to show only this process
+                    this.updateLineVisibility();
+
+                    // When focusing on a process, enable auto-scroll and scroll to bottom
+                    this.enableAutoScroll();
+                    console.log(`Focused on process ${processName} - auto-scroll activated`);
+                }
+
+                return result;
+            }
+        } catch (error) {
+            console.error('Error focusing on process:', error);
+            this.showError(`Failed to focus on ${processName}: ${error.message}`, error);
+        }
+    }
+
     /**
      * Process control methods
      */
@@ -1066,6 +1181,10 @@ class UIManager {
                 const result = await window.pollingManager.selectAllProcesses();
                 if (result.processes) {
                     this.updateProcesses(result.processes);
+
+                    // When selecting all processes, enable auto-scroll and scroll to bottom
+                    this.enableAutoScroll();
+                    console.log('All processes selected - auto-scroll activated');
                 }
             }
         } catch (error) {

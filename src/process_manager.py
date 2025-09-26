@@ -67,6 +67,11 @@ class ProcessInfo:
         if self.status == "broken":
             self.status = "unknown"
 
+        # Add restart separator to logs
+        for _ in range(40):
+            self.output_lines.append("")
+        self.output_lines.append(f"restarting process {self.name}")
+
     def set_warning_patterns(self, patterns: List[str]):
         """Set warning patterns to monitor for this process"""
         self.warning_patterns = patterns
@@ -427,8 +432,19 @@ class TestProcessManager(unittest.TestCase):
 
         self.assertTrue(process.is_broken())
 
+        # Record initial output line count
+        initial_line_count = len(process.output_lines)
+
         manager.restart_process("test")
         self.assertFalse(process.is_broken())
+
+        # Verify restart separator was added (40 blank lines + restart message)
+        self.assertEqual(len(process.output_lines), initial_line_count + 41)
+        # Check the last line is the restart message
+        self.assertEqual(process.output_lines[-1], "restarting process test")
+        # Check that the 40 lines before the restart message are empty
+        for i in range(40):
+            self.assertEqual(process.output_lines[-(41-i)], "")
 
     def test_get_stats(self):
         """Test getting process statistics"""

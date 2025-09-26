@@ -22,7 +22,7 @@ const highlightSearchInHtml = (html, searchTerm) => {
     }).join('');
 };
 
-// Strip ANSI codes for legacy compatibility (backend now provides clean_text)
+// Strip ANSI codes for legacy compatibility
 const stripAnsiCodes = (text) => {
     return text.replace(/[\x1b\u001b]\[[0-9;]*m/g, '');
 };

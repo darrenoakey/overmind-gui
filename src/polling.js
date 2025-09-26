@@ -84,8 +84,8 @@ class PollingManager {
             
             const data = await response.json();
             
-            // Update message ID for next poll - use next_poll_message_id if provided
-            this.lastMessageId = data.next_poll_message_id || data.latest_message_id;
+            // Update message ID for next poll - use last_id from backend
+            this.lastMessageId = data.last_id;
             
             // Update stats
             this.stats = data.stats || {};

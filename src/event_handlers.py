@@ -11,19 +11,8 @@ async def startup_handler(sanic_app, _loop):
     """Handle application startup"""
     print("🚀 Starting Overmind GUI...")
 
-    # Try to load Procfile if it exists
-    if hasattr(sanic_app.ctx, 'process_manager'):
-        try:
-            process_names = sanic_app.ctx.process_manager.load_procfile()
-            if process_names:
-                process_list = ', '.join(process_names)
-                print(f"📋 Loaded {len(process_names)} processes: {process_list}")
-            else:
-                print("📋 No processes found in Procfile")
-        except FileNotFoundError:
-            print("📋 No Procfile found - will start without predefined processes")
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            print(f"⚠️ Error loading Procfile: {e}")
+    # Procfile loading is now handled in initialize_managers with proper working directory
+    print("📋 Procfile loading will be handled by daemon management task")
 
     # Start overmind controller
     if hasattr(sanic_app.ctx, 'overmind_controller'):

@@ -26,9 +26,9 @@ class SearchManager {
         const searchLower = searchText.toLowerCase();
         
         filteredOutput.forEach((line, index) => {
-            // Use pre-processed clean text from backend
-            const cleanLine = line.cleanText || line.clean_text || line;
-            if (cleanLine.toLowerCase().includes(searchLower)) {
+            // Search directly in HTML content
+            const htmlContent = line.html || line.htmlContent || line;
+            if (htmlContent.toLowerCase().includes(searchLower)) {
                 results.push(index);
             }
         });
@@ -123,6 +123,7 @@ class SearchManager {
         this.searchResults = [];
         this.currentSearchIndex = -1;
     }
+
 }
 
 // Export for use in other files

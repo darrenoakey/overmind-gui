@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Overmind GUI - Polling-based web interface for Overmind process management
+Overmind GUI - Daemon-based web interface for Overmind process management
 
-A modern, polling-based web interface for managing Overmind processes with:
-- Live process monitoring and control via polling  
+A modern, daemon-based web interface for managing Overmind processes with:
+- Connection to independent overmind daemon
+- Live process monitoring and control via polling
 - Real-time output streaming with 4x/sec updates
 - Advanced filtering and search
 - Modern CSS-based UI with 5000 line limit
-- No WebSockets - pure HTTP polling
+- Automatic daemon discovery and connection management
 """
 
 import argparse
@@ -28,10 +29,10 @@ from sanic import Sanic, response
 
 # Import our modules
 from process_manager import ProcessManager
-from overmind_controller import OvermindController
+from daemon_manager import DaemonManager
+from database_client import DatabaseClient
 from static_files import setup_static_routes
-from api_routes import setup_api_routes
-from update_queue import update_queue
+from api_routes_daemon import setup_api_routes
 
 # -----------------------------------------------------------------------------
 # Suppress pkg_resources warning from tracerite/html
@@ -52,6 +53,9 @@ HOST = "127.0.0.1"
 
 # CRITICAL: This will be set to the actual allocated port - DO NOT MODIFY ANYWHERE ELSE
 ALLOCATED_PORT_DONT_CHANGE = None
+
+# Global working directory - set in main() and accessed by background tasks
+WORKING_DIRECTORY = None
 
 # -----------------------------------------------------------------------------
 # Port management
@@ -76,18 +80,18 @@ def get_and_increment_version():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     root_dir = os.path.dirname(script_dir)
     version_file = os.path.join(root_dir, "version.txt")
-    
+
     try:
         if os.path.exists(version_file):
             with open(version_file, 'r') as f:
                 current_version = int(f.read().strip())
         else:
             current_version = 0
-        
+
         new_version = current_version + 1
         with open(version_file, 'w') as f:
             f.write(str(new_version))
-        
+
         return new_version
     except (ValueError, IOError) as e:
         print(f"Error managing version: {e}")
@@ -96,25 +100,26 @@ def get_and_increment_version():
 # -----------------------------------------------------------------------------
 # App setup
 # -----------------------------------------------------------------------------
-app = Sanic("OvermindGUI")
-app.config.DEBUG = True
+app = Sanic("OvermindGUIDaemon")
+app.config.DEBUG = False  # Disable debug spam
 app.config.AUTO_RELOAD = False
 app.config.WORKERS = 1
 # UI_PORT will be stored in app.ctx at runtime - NO CONFIG FILES!
 
 # Get version and store in app context
 app.ctx.version = get_and_increment_version()
-print(f"Starting Overmind GUI v{app.ctx.version}")
+print(f"Starting Overmind GUI (Daemon Mode) v{app.ctx.version}")
 
-# Initialize managers
+# Initialize managers - simplified database-based architecture
 app.ctx.process_manager = ProcessManager()
-app.ctx.overmind_controller = None
-app.ctx.overmind_failed = False
-app.ctx.overmind_error = ""
+app.ctx.daemon_manager = None  # Will be set when we know working directory
+app.ctx.database_client = None  # Will be set when we know working directory
+app.ctx.daemon_failed = False
+app.ctx.daemon_error = ""
 app.ctx.tasks = []
 app.ctx.shutdown_initiated = False
 app.ctx.shutdown_complete = False
-app.ctx.overmind_args = []  # Will be populated by main()
+app.ctx.last_poll_id = 0  # Track last database ID for incremental polling
 
 # Global shutdown event for coordination
 shutdown_event = asyncio.Event()
@@ -128,32 +133,33 @@ async def shutdown_message_chain(app_instance):
         print("🔗 SHUTDOWN MESSAGE CHAIN STARTED")
         print("=" * 40)
 
-        # Message 1: UI closed → Stop overmind
-        print("📨 [MESSAGE 1] UI closed → Stopping overmind...")
-        if app_instance.ctx.overmind_controller:
-            print("📦 Stopping overmind controller...")
+        # Message 1: UI closed → Stop daemon
+        print("📨 [MESSAGE 1] UI closed → Stopping daemon...")
+        if app_instance.ctx.daemon_manager:
+            print("📦 Stopping daemon via daemon manager...")
             try:
-                await app_instance.ctx.overmind_controller.stop()
-                print("✅ [MESSAGE 1] Overmind controller stopped completely")
+                success = app_instance.ctx.daemon_manager.stop_daemon()
+                if success:
+                    print("✅ [MESSAGE 1] Daemon stopped completely")
+                else:
+                    print("⚠️ [MESSAGE 1] Daemon stop reported failure")
             except Exception as e:
-                print(f"❌ [MESSAGE 1] Error stopping overmind: {e}")
+                print(f"❌ [MESSAGE 1] Error stopping daemon: {e}")
                 import traceback
                 traceback.print_exc()
-            finally:
-                app_instance.ctx.overmind_controller = None
         else:
-            print("ℹ️  [MESSAGE 1] No overmind controller to stop")
+            print("ℹ️  [MESSAGE 1] No daemon manager available")
 
-        print("📨 [MESSAGE 1] ✅ COMPLETE - Overmind shutdown finished")
+        print("📨 [MESSAGE 1] ✅ COMPLETE - Daemon shutdown finished")
 
-        # Message 2: Overmind stopped → Stop Sanic
-        print("\n📨 [MESSAGE 2] Overmind stopped → Stopping Sanic server...")
+        # Message 2: Daemon stopped → Stop Sanic
+        print("\n📨 [MESSAGE 2] Daemon stopped → Stopping Sanic server...")
         try:
             # Instead of calling app_instance.stop() directly, we need to signal the server
             # to stop from outside the current async context to avoid deadlock
             import os
             import signal
-            
+
             # Get the current process ID and send SIGINT to trigger graceful shutdown
             current_pid = os.getpid()
             print(f"📤 [MESSAGE 2] Sending SIGINT to main process PID {current_pid}")
@@ -171,20 +177,18 @@ async def shutdown_message_chain(app_instance):
         print(f"❌ Error in shutdown message chain: {e}")
         import traceback
         traceback.print_exc()
-        
+
         # Fallback: try to stop server anyway
         try:
             app_instance.stop()
         except:
             pass
 
-
 # -----------------------------------------------------------------------------
 # Setup routes
 # -----------------------------------------------------------------------------
 setup_static_routes(app)
 setup_api_routes(app)
-
 
 # Shutdown endpoint to stop the server
 @app.route("/shutdown", methods=["POST"])
@@ -199,16 +203,25 @@ async def shutdown_server(request):
         async def graceful_shutdown():
             print("🛑 Graceful shutdown initiated...")
 
-            # Stop overmind first if it's running
-            if request.app.ctx.overmind_controller:
-                print("🛑 Stopping overmind controller...")
+            # Stop daemon client first if it's running
+            if request.app.ctx.daemon_client:
+                print("🛑 Stopping daemon client...")
                 try:
-                    await request.app.ctx.overmind_controller.stop()
-                    print("✅ Overmind controller stopped")
+                    await request.app.ctx.daemon_client.stop()
+                    print("✅ Daemon client stopped")
                 except Exception as e:
-                    print(f"❌ Error stopping overmind: {e}")
+                    print(f"❌ Error stopping daemon client: {e}")
                 finally:
-                    request.app.ctx.overmind_controller = None
+                    request.app.ctx.daemon_client = None
+
+            # Stop discovery manager
+            if request.app.ctx.daemon_discovery:
+                print("🛑 Stopping daemon discovery...")
+                try:
+                    await request.app.ctx.daemon_discovery.cleanup_connections()
+                    print("✅ Daemon discovery stopped")
+                except Exception as e:
+                    print(f"❌ Error stopping daemon discovery: {e}")
 
             # Cancel background tasks cleanly
             if request.app.ctx.tasks:
@@ -242,121 +255,242 @@ async def shutdown_server(request):
         return response.json({"error": str(e)}, status=500)
 
 # -----------------------------------------------------------------------------
-# Background task callbacks for update queue
+# Database polling helpers
 # -----------------------------------------------------------------------------
-def handle_output_line(line: str, app_instance):
-    """Handle new output line from overmind - add to update queue"""
-    # Parse process name from overmind output
-    process_name = app_instance.ctx.process_manager.add_output_line(line)
-    
-    if process_name:
-        # Add to update queue
-        update_queue.add_output_line(line, process_name)
-    else:
-        # Fallback - add as 'system' output
-        update_queue.add_output_line(line, 'system')
+def initialize_managers(app_instance, working_directory: str):
+    """Initialize daemon and database managers once we know working directory"""
+    app_instance.ctx.daemon_manager = DaemonManager(working_directory)
+    app_instance.ctx.database_client = DatabaseClient(working_directory)
 
+    # Load processes from Procfile - this should never return 0 processes!
+    procfile_path = os.path.join(working_directory, "Procfile")
+    process_names = app_instance.ctx.process_manager.load_procfile(procfile_path)
 
-def handle_status_update(status_updates: dict, app_instance):
-    """Handle status updates from overmind - add to update queue"""
-    # Update process manager
-    for process_name, status in status_updates.items():
-        app_instance.ctx.process_manager.update_process_status(process_name, status)
+    print(f"📋 Loaded {len(process_names)} processes from Procfile: {process_names}")
 
-    # Add to update queue
-    update_queue.add_bulk_status_updates(status_updates)
-
+    print(f"✅ Initialized managers for directory: {working_directory}")
 
 # -----------------------------------------------------------------------------
 # Background tasks
 # -----------------------------------------------------------------------------
-async def overmind_task(app_instance):
-    """Run the overmind controller as a background task"""
+
+async def poll_overmind_status(app_instance):
+    """Poll overmind status and update process manager"""
     try:
-        # Check for Procfile
-        if not os.path.exists("Procfile"):
-            print("WARNING: No Procfile found in current directory")
-            app_instance.ctx.overmind_failed = True
-            app_instance.ctx.overmind_error = "No Procfile found in current directory"
-            return
+        import subprocess
 
-        # Load processes from Procfile
-        try:
-            process_names = app_instance.ctx.process_manager.load_procfile()
-            print(f"Loaded {len(process_names)} processes: {', '.join(process_names)}")
-        except (FileNotFoundError, OSError) as e:
-            print(f"Error loading Procfile: {e}")
-            app_instance.ctx.overmind_failed = True
-            app_instance.ctx.overmind_error = f"Error loading Procfile: {e}"
-            return
+        working_dir = getattr(app_instance.ctx, 'working_directory', os.getcwd())
 
-        # Load processes from Procfile into process manager
-        process_names = app_instance.ctx.process_manager.load_procfile("Procfile")
-        print(f"DEBUG: Loaded {len(process_names)} processes from Procfile: {process_names}")
-        
-        # Initialize overmind controller with callbacks and passthrough args
-        overmind_args = getattr(app_instance.ctx, 'overmind_args', [])
-        app_instance.ctx.overmind_controller = OvermindController(
-            output_callback=lambda line: handle_output_line(line, app_instance),
-            status_callback=lambda updates: handle_status_update(updates, app_instance),
-            overmind_args=overmind_args
+        # Run overmind status
+        result = subprocess.run(
+            ['overmind', 'status'],
+            cwd=working_dir,
+            capture_output=True,
+            text=True,
+            timeout=5
         )
 
-        # Start overmind
-        success = await app_instance.ctx.overmind_controller.start()
-        if success:
-            print("Overmind started successfully")
-            # Force initial status check
+        if result.returncode == 0:
+            # Parse overmind status output
+            lines = result.stdout.strip().split('\n')
+            status_updates = {}
+
+            # Skip header line if present
+            data_lines = [line for line in lines if line.strip() and not line.startswith('PROCESS')]
+
+            for line in data_lines:
+                # Split by whitespace - format: PROCESS    PID    STATUS
+                parts = line.split()
+                if len(parts) >= 3:
+                    process_name = parts[0].strip()
+                    # pid = parts[1].strip()  # Not needed for status updates
+                    status = parts[2].strip()
+
+                    # Update process manager
+                    if process_name in app_instance.ctx.process_manager.processes:
+                        app_instance.ctx.process_manager.update_process_status(process_name, status)
+                        status_updates[process_name] = status
+
+    except subprocess.TimeoutExpired:
+        pass  # Silent timeout
+    except FileNotFoundError:
+        pass  # Overmind not available
+    except Exception as e:
+        pass  # Silent error handling
+
+async def status_polling_task(app_instance):
+    """Background task to poll overmind status every second"""
+    try:
+        # Do initial status poll immediately
+        await poll_overmind_status(app_instance)
+
+        while app_instance.ctx.running:
             try:
-                status_output = await app_instance.ctx.overmind_controller.get_status()
-                if status_output:
-                    status_updates = app_instance.ctx.overmind_controller.parse_status_output(status_output)
-                    if status_updates:
-                        handle_status_update(status_updates, app_instance)
-                        print(f"Initial status loaded: {status_updates}")
+                # Poll every second
+                await asyncio.sleep(1.0)
+                await poll_overmind_status(app_instance)
             except Exception as e:
-                print(f"Error getting initial status: {e}")
-        else:
-            error_msg = "Failed to start Overmind"
-            # Check for common issues
-            if os.path.exists(".overmind.sock"):
-                error_msg += " (socket file exists - another instance may be running)"
-            print(error_msg)
-            app_instance.ctx.overmind_failed = True
-            app_instance.ctx.overmind_error = error_msg
-            return
-
-        # Keep running periodic status updates
-        await asyncio.sleep(10)  # Wait for initial startup
-
-        while app_instance.ctx.running and not shutdown_event.is_set():
-            try:
-                if app_instance.ctx.overmind_controller:
-                    # Force a status check
-                    status_output = await app_instance.ctx.overmind_controller.get_status()
-                    if status_output:
-                        status_updates = app_instance.ctx.overmind_controller.parse_status_output(
-                            status_output
-                        )
-                        if status_updates:
-                            handle_status_update(status_updates, app_instance)
-            except (OSError, subprocess.SubprocessError) as e:
-                print(f"Error in periodic status update: {e}")
-
-            # Wait 30 seconds before next check
-            for _ in range(30):
-                if shutdown_event.is_set() or not app_instance.ctx.running:
-                    break
-                await asyncio.sleep(1)
+                print(f"⚠️ Error in status polling cycle: {e}")
+                await asyncio.sleep(5.0)  # Wait longer on error
 
     except asyncio.CancelledError:
-        print("🛑 [OVERMIND TASK] Task was cancelled - shutdown in progress")
-    except RuntimeError as e:
-        print(f"❌ [OVERMIND TASK] Runtime error: {e}")
-        traceback.print_exc()
+        print("🛑 Status polling task cancelled")
+    except Exception as e:
+        print(f"❌ Status polling task failed: {e}")
     finally:
-        print("🏁 [OVERMIND TASK] Overmind background task completed")
+        print("🏁 Status polling task completed")
 
+async def daemon_management_task(app_instance, working_directory: str):
+    """Manage daemon lifecycle and database polling"""
+    try:
+        print("🔄 Starting daemon management task")
+
+        # Use the passed working directory
+        working_dir = working_directory
+        print(f"📁 Working directory: {working_dir}")
+
+        # Store working directory in context for other functions
+        app_instance.ctx.working_directory = working_dir
+
+        # Initialize managers
+        initialize_managers(app_instance, working_dir)
+
+        # Ensure daemon is running
+        print("🔄 Ensuring daemon is running...")
+        if app_instance.ctx.daemon_manager.is_daemon_running():
+            daemon_pid = app_instance.ctx.daemon_manager.get_daemon_pid()
+            if daemon_pid:
+                print(f"✅ Found daemon as process {daemon_pid}")
+                app_instance.ctx.daemon_pid = daemon_pid  # Store for monitoring
+            else:
+                print("✅ Found daemon running")
+        else:
+            daemon_started = app_instance.ctx.daemon_manager.start_daemon()
+            if not daemon_started:
+                print("❌ Failed to start daemon")
+                app_instance.ctx.daemon_failed = True
+                app_instance.ctx.daemon_error = "Failed to start daemon"
+                return
+
+            daemon_pid = app_instance.ctx.daemon_manager.get_daemon_pid()
+            if daemon_pid:
+                print(f"✅ Started daemon as process {daemon_pid}")
+                app_instance.ctx.daemon_pid = daemon_pid  # Store for monitoring
+            else:
+                print("✅ Daemon started")
+
+        # Initialize polling with first load (limited per process)
+        print("🔄 Loading initial data...")
+        initial_lines = app_instance.ctx.database_client.get_output_lines(since_id=0, limit=5000)
+        if initial_lines:
+            app_instance.ctx.last_poll_id = max(line['id'] for line in initial_lines)
+            print(f"📊 Initial load: {len(initial_lines)} lines, latest ID: {app_instance.ctx.last_poll_id}")
+
+            # Process for local tracking
+            for line in initial_lines:
+                app_instance.ctx.process_manager.add_output_line(line['html'])
+
+        # Start database polling loop and status monitoring
+        print("🔄 Starting database polling loop...")
+
+
+        while not app_instance.ctx.shutdown_initiated and app_instance.ctx.running:
+            try:
+                # Check if daemon is still running - but DON'T restart it
+                # The daemon should only be started once at startup
+                if not app_instance.ctx.daemon_manager.is_daemon_running():
+                    print("⚠️ Daemon has exited unexpectedly - initiating shutdown")
+                    app_instance.ctx.daemon_failed = True
+
+                    # Daemon died, so we should shut down the entire backend
+                    shutdown_event.set()
+                    app_instance.ctx.shutdown_initiated = True
+                    app_instance.stop()
+                    break
+
+                # Poll database for new lines (incremental)
+                new_lines = app_instance.ctx.database_client.get_output_lines(
+                    since_id=app_instance.ctx.last_poll_id,
+                    limit=1000  # Reasonable batch size for incremental updates
+                )
+
+                if new_lines:
+                    # Update last poll ID
+                    app_instance.ctx.last_poll_id = max(line['id'] for line in new_lines)
+
+                    # Process lines for local tracking
+                    for line in new_lines:
+                        app_instance.ctx.process_manager.add_output_line(line['html'])
+
+
+
+                # Poll every 250ms for good responsiveness
+                await asyncio.sleep(0.25)
+
+            except Exception as e:
+                print(f"⚠️ Error in polling loop: {e}")
+                await asyncio.sleep(1)  # Wait a bit before retrying
+
+        print("🔄 Daemon management task ending due to shutdown")
+
+    except asyncio.CancelledError:
+        print("🛑 [DAEMON MANAGEMENT] Task was cancelled - shutdown in progress")
+    except Exception as e:
+        print(f"❌ [DAEMON MANAGEMENT] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        app_instance.ctx.daemon_failed = True
+        app_instance.ctx.daemon_error = str(e)
+    finally:
+        print("🏁 [DAEMON MANAGEMENT] Daemon management task completed")
+
+async def daemon_monitor_task(app_instance):
+    """Monitor daemon process and trigger GUI shutdown when daemon exits"""
+    try:
+        print("👁️ [DAEMON MONITOR] Started monitoring daemon process")
+
+        # Wait for daemon PID to be set
+        while not hasattr(app_instance.ctx, 'daemon_pid') or app_instance.ctx.daemon_pid is None:
+            await asyncio.sleep(1)
+            if shutdown_event.is_set() or app_instance.ctx.shutdown_initiated:
+                return
+
+        daemon_pid = app_instance.ctx.daemon_pid
+        print(f"👁️ [DAEMON MONITOR] Monitoring daemon PID: {daemon_pid}")
+
+        # Monitor daemon process
+        import psutil
+        while not shutdown_event.is_set() and app_instance.ctx.running:
+            try:
+                # Check if daemon process exists
+                if not psutil.pid_exists(daemon_pid):
+                    print("⚠️ [DAEMON MONITOR] Daemon process has exited!")
+                    print("🛑 [DAEMON MONITOR] Initiating GUI shutdown...")
+
+                    # Set shutdown flag
+                    shutdown_event.set()
+                    app_instance.ctx.shutdown_initiated = True
+
+                    # Trigger graceful shutdown
+                    print("🛑 [DAEMON MONITOR] Stopping server...")
+                    app_instance.stop()
+                    break
+
+                # Check every second
+                await asyncio.sleep(1)
+
+            except Exception as e:
+                print(f"⚠️ [DAEMON MONITOR] Error checking daemon: {e}")
+                await asyncio.sleep(1)
+
+        print("🏁 [DAEMON MONITOR] Monitoring task completed")
+
+    except asyncio.CancelledError:
+        print("🛑 [DAEMON MONITOR] Task was cancelled")
+    except Exception as e:
+        print(f"❌ [DAEMON MONITOR] Error: {e}")
+        import traceback
+        traceback.print_exc()
 
 async def ui_launcher_task(app_instance):
     """Launch the UI subprocess"""
@@ -366,17 +500,17 @@ async def ui_launcher_task(app_instance):
         # CRITICAL: Port must match ALLOCATED_PORT_DONT_CHANGE
         # ====================================================================
         global ALLOCATED_PORT_DONT_CHANGE
-        
+
         port_from_context = app_instance.ctx.UI_PORT
         port_from_global = ALLOCATED_PORT_DONT_CHANGE
-        
+
         print(f"🔌 [UI LAUNCHER] Port from context: {port_from_context}")
         print(f"🔌 [UI LAUNCHER] Port from global: {port_from_global}")
-        
+
         # VERIFICATION: These MUST match or we have a bug
         if port_from_context != port_from_global:
             raise RuntimeError(f"PORT MISMATCH BUG! Context={port_from_context}, Global={port_from_global}")
-        
+
         # Use the global variable as the source of truth
         THE_CORRECT_PORT = ALLOCATED_PORT_DONT_CHANGE
         print(f"🔌 [UI LAUNCHER] Using THE_CORRECT_PORT = {THE_CORRECT_PORT}")
@@ -395,7 +529,7 @@ async def ui_launcher_task(app_instance):
             str(THE_CORRECT_PORT)  # This MUST be the same as the main server port
         ]
         print(f"🔌 [UI LAUNCHER] Subprocess args: {' '.join(subprocess_args)}")
-        
+
         proc = await asyncio.create_subprocess_exec(
             *subprocess_args,
             stdout=asyncio.subprocess.PIPE,
@@ -416,19 +550,19 @@ async def ui_launcher_task(app_instance):
 
         if proc.returncode is not None:
             print(f"[UI] UI subprocess exited with code {proc.returncode}")
-            
+
             # If the UI subprocess exited normally (code 0), it means user closed the window
             # Start the shutdown message chain
             if proc.returncode == 0 and not app_instance.ctx.shutdown_initiated:
                 print("\n" + "="*70)
                 print("🔴 UI SUBPROCESS EXITED - STARTING SHUTDOWN MESSAGE CHAIN")
                 print("="*70)
-                
-                # Step 1: Set flags and start overmind shutdown
-                print("📨 [MESSAGE 1] UI closed → Starting overmind shutdown...")
+
+                # Step 1: Set flags and start daemon client shutdown
+                print("📨 [MESSAGE 1] UI closed → Starting daemon client shutdown...")
                 app_instance.ctx.shutdown_initiated = True
                 shutdown_event.set()
-                
+
                 # Create a background task to handle the shutdown chain
                 asyncio.create_task(shutdown_message_chain(app_instance))
 
@@ -445,7 +579,6 @@ async def ui_launcher_task(app_instance):
             print(f"✅ [UI LAUNCHER] UI subprocess terminated")
         print("🏁 [UI LAUNCHER] UI launcher task completed")
 
-
 # -----------------------------------------------------------------------------
 # Signal handling for graceful shutdown
 # -----------------------------------------------------------------------------
@@ -461,7 +594,6 @@ def setup_signal_handlers(app_instance):
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-
 # -----------------------------------------------------------------------------
 # Window close handler for webview
 # -----------------------------------------------------------------------------
@@ -470,13 +602,13 @@ def on_window_closing():
     print("\n" + "="*70)
     print("🔴 WEBVIEW WINDOW CLOSING - SHUTDOWN SEQUENCE INITIATED")
     print("="*70)
-    
+
     # Set the shutdown flag to trigger cleanup
     if not app.ctx.shutdown_initiated:
         print("🚩 Setting shutdown flags and triggering server stop...")
         app.ctx.shutdown_initiated = True
         shutdown_event.set()
-        
+
         # Stop the Sanic server gracefully
         try:
             print("🛑 Stopping Sanic server...")
@@ -486,15 +618,13 @@ def on_window_closing():
             print(f"❌ Error stopping server: {e}")
     else:
         print("⚠️  Shutdown already in progress - ignoring additional close request")
-    
+
     print("🔄 Window close handler completed - awaiting server cleanup...")
     return True
-
 
 # -----------------------------------------------------------------------------
 # Lifecycle hooks
 # -----------------------------------------------------------------------------
-
 @app.before_server_start
 async def setup(app_instance, loop):
     """Set up the application before server starts"""
@@ -503,23 +633,37 @@ async def setup(app_instance, loop):
     # Setup signal handlers
     setup_signal_handlers(app_instance)
 
-    # Send startup message to indicate server restart
-    update_queue.add_server_started(app_instance.ctx.version)
+    # Backend startup - daemon handles startup messages
 
-    # Start overmind controller task
-    t1 = loop.create_task(overmind_task(app_instance))
+    # Start daemon management task (replaces daemon client)
+    # Get working directory from environment variable (set by main())
+    working_dir = os.environ.get('OVERMIND_GUI_WORKING_DIR', os.getcwd())
+    t1 = loop.create_task(daemon_management_task(app_instance, working_dir))
 
     # Start UI launcher task
     t2 = loop.create_task(ui_launcher_task(app_instance))
 
-    app_instance.ctx.tasks.extend([t1, t2])
+    # Start backend status polling task (this polls overmind status, not the daemon)
+    t3 = loop.create_task(status_polling_task(app_instance))
 
+    # Start daemon monitor task to watch for daemon exit
+    t4 = loop.create_task(daemon_monitor_task(app_instance))
+
+    app_instance.ctx.tasks.extend([t1, t2, t3, t4])
 
 @app.listener("after_server_start")
 async def launch_ui(_app, _loop):
     await asyncio.sleep(0.2)  # tiny grace so routes are live
-    subprocess.Popen(["open", "/Applications/Overmind.app"])
+    # Try ~/Applications first, then /Applications as fallback
+    home_app_path = os.path.expanduser("~/Applications/Overmind.app")
+    system_app_path = "/Applications/Overmind.app"
 
+    if os.path.exists(home_app_path):
+        subprocess.Popen(["open", home_app_path])
+    elif os.path.exists(system_app_path):
+        subprocess.Popen(["open", system_app_path])
+    else:
+        print(f"⚠️ Overmind.app not found in {home_app_path} or {system_app_path}")
 
 @app.before_server_stop
 async def cleanup(app_instance, _loop):
@@ -537,21 +681,20 @@ async def cleanup(app_instance, _loop):
 
     print("✅ Fallback cleanup completed")
 
-
 # -----------------------------------------------------------------------------
 # UI-only launcher
 # -----------------------------------------------------------------------------
 def launch_ui(port: int, is_subprocess: bool = False):
     """Launch the desktop UI - uses system browser by default, pywebview if USE_PYTHON_WEBVIEW is set
-    
+
     CRITICAL: This function MUST receive the correct dynamically allocated port.
     DO NOT hardcode port 8000 anywhere in this function or its callees.
     """
     print(f"[UI] launch_ui called with port={port}, is_subprocess={is_subprocess}")
-    
+
     # Check if pywebview should be used (when USE_PYTHON_WEBVIEW is set)
     use_webview = os.environ.get('USE_PYTHON_WEBVIEW', '').lower() in ('1', 'true', 'yes')
-    
+
     if not use_webview:
         # Default path: open in system browser
         import webbrowser
@@ -559,14 +702,14 @@ def launch_ui(port: int, is_subprocess: bool = False):
         url = f"http://localhost:{port}"
         print(f"[UI] Opening {url} in default system browser (NOT hardcoded 8000!)")
         print("[UI] Set USE_PYTHON_WEBVIEW=1 to use pywebview instead")
-        
+
         try:
             webbrowser.open(url)
             print("[UI] Browser launched successfully")
         except Exception as e:
             print(f"[UI] Error launching browser: {e}")
             print(f"[UI] Please manually open {url} in your browser")
-        
+
         # For subprocess mode, we need to wait/block instead of returning immediately
         # Otherwise the subprocess exits and triggers shutdown
         if is_subprocess:
@@ -576,7 +719,7 @@ def launch_ui(port: int, is_subprocess: bool = False):
                 time.sleep(1)
             print("[UI] Browser mode: shutdown event received, subprocess exiting")
         return
-    
+
     # pywebview path (when USE_PYTHON_WEBVIEW is enabled)
     try:
         # Check if webview is available
@@ -601,7 +744,7 @@ def launch_ui(port: int, is_subprocess: bool = False):
         """Monitor shutdown event and close webview"""
         if not is_subprocess:
             return
-            
+
         while True:
             if shutdown_event.is_set():
                 print("Shutdown event detected, closing webview...")
@@ -620,7 +763,7 @@ def launch_ui(port: int, is_subprocess: bool = False):
 
     try:
         window = webview.create_window(
-            "Daz Overmind GUI",
+            "Daz Overmind GUI (Daemon Mode)",
             f"http://localhost:{port}",
             width=1400,
             height=900,
@@ -654,7 +797,6 @@ def launch_ui(port: int, is_subprocess: bool = False):
         if not is_subprocess:
             shutdown_event.set()
 
-
 # -----------------------------------------------------------------------------
 # Entrypoint
 # -----------------------------------------------------------------------------
@@ -664,18 +806,20 @@ def main():
     parser.add_argument("--ui", action="store_true", help="UI-only mode")
     parser.add_argument("--no-ui", action="store_true", help="Run server without UI")
     parser.add_argument("--port", type=int, default=None, help="Port (auto-allocated if not specified)")
-    
-    # Parse known args and collect unknown args to pass to overmind
+    parser.add_argument("--working-dir", type=str, default=None, help="Working directory (defaults to current directory)")
+
+    # Parse known args - we don't pass args to daemon since daemon is independent
     args, unknown_args = parser.parse_known_args()
-    
-    # Store overmind arguments for passthrough
-    app.ctx.overmind_args = unknown_args
-    
+
+    if unknown_args:
+        print(f"Warning: Unknown arguments ignored in daemon mode: {' '.join(unknown_args)}")
+        print("Arguments are passed directly to the daemon, not the GUI")
+
     # ========================================================================
     # CRITICAL PORT ALLOCATION SECTION - DO NOT BREAK THIS
     # ========================================================================
     global ALLOCATED_PORT_DONT_CHANGE
-    
+
     if args.port is None:
         # Dynamically find an available port
         ALLOCATED_PORT_DONT_CHANGE = find_available_port(DEFAULT_PORT_START)
@@ -684,16 +828,23 @@ def main():
         # Use user-specified port
         ALLOCATED_PORT_DONT_CHANGE = args.port
         print(f"🔌 ALLOCATED PORT: {ALLOCATED_PORT_DONT_CHANGE} (user specified)")
-    
+
     # VERIFICATION: Double-check we have the right port
     print(f"🔌 PORT VERIFICATION: ALLOCATED_PORT_DONT_CHANGE = {ALLOCATED_PORT_DONT_CHANGE}")
-    
-    if unknown_args:
-        print(f"Passing additional arguments to overmind: {' '.join(unknown_args)}")
 
     # Store in app context (runtime variable, not a config file!)
     app.ctx.UI_PORT = ALLOCATED_PORT_DONT_CHANGE
     print(f"🔌 PORT STORED IN APP CONTEXT: {app.ctx.UI_PORT}")
+
+    # Store working directory in environment variable so worker process can access it
+    working_dir = args.working_dir if args.working_dir else os.getcwd()
+    working_dir = os.path.abspath(working_dir)
+
+    # Set environment variable for worker process
+    os.environ['OVERMIND_GUI_WORKING_DIR'] = working_dir
+    app.ctx.working_directory = working_dir
+
+    print(f"📁 WORKING DIRECTORY STORED: {working_dir}")
 
     if args.ui:
         # Running as UI subprocess - MUST use the allocated port
@@ -701,23 +852,10 @@ def main():
         launch_ui(ALLOCATED_PORT_DONT_CHANGE, is_subprocess=True)
         return 0
 
-    # Check for Procfile
-    if not os.path.exists("Procfile"):
-        print("ERROR: No Procfile found in current directory")
-        print("Please run this application from a directory containing a Procfile")
-        return 1
-
-    # Check if overmind is available
-    try:
-        result = subprocess.run(["overmind", "--version"],
-                              capture_output=True, check=True)
-        print(f"Found overmind: {result.stdout.decode().strip()}")
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print("WARNING: overmind not found or not working")
-        print("Please install overmind: brew install overmind")
-        print("Continuing anyway - GUI will work but process management will be limited")
-
-    print(f"Starting Overmind GUI (polling-based) on {HOST}:{ALLOCATED_PORT_DONT_CHANGE}")
+    print(f"Starting Overmind GUI (daemon-based) on {HOST}:{ALLOCATED_PORT_DONT_CHANGE}")
+    print("This GUI connects to an independent overmind daemon.")
+    print("Make sure you have started an overmind daemon first with:")
+    print("  python overmind_daemon.py")
 
     if args.no_ui:
         print(f"UI launch disabled - access the GUI at http://localhost:{ALLOCATED_PORT_DONT_CHANGE}")
@@ -726,24 +864,24 @@ def main():
         print("UI will launch automatically. Use --no-ui to disable.")
 
     print("Press Ctrl+C to stop")
-    
+
     # ========================================================================
     # FINAL PORT VERIFICATION BEFORE SERVER START
     # ========================================================================
     SERVER_PORT = ALLOCATED_PORT_DONT_CHANGE
     print(f"🔌 FINAL VERIFICATION: Starting server on port {SERVER_PORT}")
     print(f"🔌 FINAL VERIFICATION: UI will connect to port {SERVER_PORT}")
-    
+
     if SERVER_PORT is None:
         raise RuntimeError("CRITICAL BUG: SERVER_PORT is None!")
-    
+
     print(f"🔌 SERVER STARTING ON PORT {SERVER_PORT} (NOT 8000!)")
 
     try:
         app.run(
             host=HOST,
             port=SERVER_PORT,  # Use the verified allocated port
-            debug=True,
+            debug=False,  # No debug spam
             auto_reload=False,
             workers=1,
             access_log=False,
@@ -757,18 +895,17 @@ def main():
 
     return 0
 
-
 # -----------------------------------------------------------------------------
 # Tests
 # -----------------------------------------------------------------------------
-class TestOvermindGui(unittest.TestCase):
-    """Test cases for the Overmind GUI application"""
+class TestOvermindGuiDaemon(unittest.TestCase):
+    """Test cases for the Overmind GUI Daemon application"""
 
     def test_default_configuration(self):
         """Test default configuration values"""
         self.assertEqual(DEFAULT_PORT_START, 8000)
         self.assertEqual(HOST, "127.0.0.1")
-        
+
     def test_port_allocation(self):
         """Test dynamic port allocation"""
         port = find_available_port(DEFAULT_PORT_START)
@@ -777,7 +914,7 @@ class TestOvermindGui(unittest.TestCase):
 
     def test_app_initialization(self):
         """Test that the Sanic app is properly initialized"""
-        self.assertEqual(app.name, "OvermindGUI")
+        self.assertEqual(app.name, "OvermindGUIDaemon")
         self.assertFalse(app.config.DEBUG)
         self.assertFalse(app.config.AUTO_RELOAD)
         self.assertEqual(app.config.WORKERS, 1)
@@ -810,7 +947,6 @@ class TestOvermindGui(unittest.TestCase):
         """Test that callback functions exist and are callable"""
         self.assertTrue(callable(handle_output_line))
         self.assertTrue(callable(handle_status_update))
-
 
 if __name__ == "__main__":
     main()

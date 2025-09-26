@@ -133,11 +133,10 @@ function handlePollingResponse(data) {
     
     // NEW OPTIMIZED FORMAT:
     // data = {
-    //   output_lines: [{id, html, clean_text, process, timestamp}, ...],
+    //   output_lines: [{id, html, process}, ...],
     //   status_updates: {process: status, ...},
     //   total_lines: int,
     //   other_updates: [...],
-    //   timestamp: float,
     //   stats: {...}
     // }
     

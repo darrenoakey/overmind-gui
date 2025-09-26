@@ -5,6 +5,7 @@ Provides endpoints for process management and polling updates using direct datab
 
 import asyncio
 import json
+import os
 import re
 import time
 import unittest
@@ -434,51 +435,110 @@ async def reconnect_daemon(request: Request) -> HTTPResponse:
 
 @api_bp.route("/shutdown", methods=["POST"])
 async def shutdown_daemon(request: Request) -> HTTPResponse:
-    """Initiate proper shutdown sequence: daemon shuts down overmind, then daemon, then GUI"""
+    """Initiate proper shutdown sequence: stop overmind via daemon, then daemon exits, then GUI exits"""
     try:
-        if not hasattr(request.app.ctx, "daemon_client") or not request.app.ctx.daemon_client:
-            return response.json({"error": "Daemon client not available"}, status=503)
+        # Check if we have database client (which means daemon is running)
+        if not hasattr(request.app.ctx, "database_client") or not request.app.ctx.database_client:
+            return response.json({"error": "Database client not available"}, status=503)
 
-        # Step 1: Tell daemon to shutdown overmind and then itself
-        daemon_url = request.app.ctx.daemon_client.daemon_url
-        if daemon_url:
-            print("🔄 Step 1: Requesting daemon to shutdown overmind and daemon...")
-            try:
-                shutdown_response = await request.app.ctx.daemon_client._http_get(f"{daemon_url}/shutdown")
-                print(f"✅ Daemon shutdown initiated: {shutdown_response}")
-            except Exception as e:
-                print(f"⚠️ Error requesting daemon shutdown: {e}")
+        print("🔄 Initiating shutdown sequence...")
 
-        # Step 2: Schedule GUI shutdown after daemon is confirmed down
-        async def delayed_gui_shutdown():
-            # Give daemon time to shutdown overmind and itself
-            print("⏳ Waiting for daemon to shutdown overmind and daemon...")
-            await asyncio.sleep(3)
+        # CRITICAL: Set shutdown flag FIRST to prevent daemon auto-restart
+        request.app.ctx.shutdown_initiated = True
+        print("✅ Set shutdown_initiated flag to prevent daemon auto-restart")
 
-            # Try to verify daemon is actually down
-            max_attempts = 10
-            daemon_down = False
-            for attempt in range(max_attempts):
-                try:
-                    if daemon_url:
-                        test_response = await request.app.ctx.daemon_client._http_get(f"{daemon_url}/status")
-                        print(f"🔍 Attempt {attempt + 1}: Daemon still responding")
-                        await asyncio.sleep(1)
-                except:
-                    print(f"✅ Daemon is down (attempt {attempt + 1})")
-                    daemon_down = True
-                    break
+        # Step 1: Tell daemon to shutdown overmind by calling 'overmind quit'
+        import subprocess
+        import psutil
+        working_dir = getattr(request.app.ctx, 'working_directory', os.getcwd())
 
-            if daemon_down:
-                print("🏁 Daemon confirmed down, shutting down GUI...")
+        print(f"🛑 Executing 'overmind quit' in {working_dir}...")
+        try:
+            # Call overmind quit
+            result = subprocess.run(
+                ['overmind', 'quit'],
+                cwd=working_dir,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                print(f"✅ Overmind quit command sent: {result.stdout}")
             else:
-                print("⚠️ Daemon may still be running, shutting down GUI anyway...")
+                print(f"⚠️ Overmind quit failed: {result.stderr}")
+        except subprocess.TimeoutExpired:
+            print("⚠️ Overmind quit command timed out")
+        except Exception as e:
+            print(f"⚠️ Error executing overmind quit: {e}")
 
-            # Step 3: Disconnect our client and shutdown GUI
-            await request.app.ctx.daemon_client.stop()
-            request.app.stop()
+        # Step 2: Wait for overmind process to exit (up to 15 seconds)
+        print("⏳ Waiting for overmind to exit (up to 15 seconds)...")
+        wait_start = time.time()
+        overmind_exited = False
 
-        request.app.add_task(delayed_gui_shutdown())
+        while time.time() - wait_start < 15:
+            # Check if overmind process is still running
+            overmind_running = False
+            for proc in psutil.process_iter(['name', 'cmdline']):
+                try:
+                    if proc.info['name'] == 'overmind' or 'overmind' in str(proc.info.get('cmdline', [])):
+                        overmind_running = True
+                        break
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            if not overmind_running:
+                overmind_exited = True
+                print("✅ Overmind has exited successfully")
+                break
+
+            await asyncio.sleep(0.5)
+
+        # Step 3: If overmind didn't exit, force kill stuck processes
+        if not overmind_exited:
+            print("⚠️ Overmind did not exit within 15 seconds, checking for stuck processes...")
+
+            # Try to get process list from overmind
+            try:
+                ps_result = subprocess.run(
+                    ['overmind', 'ps'],
+                    cwd=working_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if ps_result.returncode == 0:
+                    # Parse overmind ps output to find PIDs
+                    # Format is usually: "process_name   pid   status"
+                    for line in ps_result.stdout.split('\n'):
+                        parts = line.split()
+                        if len(parts) >= 2 and parts[1].isdigit():
+                            pid = int(parts[1])
+                            print(f"🔪 Force killing stuck process {parts[0]} (PID: {pid})")
+                            try:
+                                os.kill(pid, 9)  # SIGKILL
+                            except ProcessLookupError:
+                                pass
+            except Exception as e:
+                print(f"⚠️ Could not get process list from overmind: {e}")
+
+            # Also try to kill overmind itself
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    if proc.info['name'] == 'overmind' or 'overmind' in str(proc.info.get('cmdline', [])):
+                        print(f"🔪 Force killing overmind (PID: {proc.info['pid']})")
+                        proc.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            # Wait a bit more for processes to die
+            await asyncio.sleep(2)
+            print("✅ Forced cleanup completed")
+
+        # The cascade will continue:
+        # - Daemon will detect overmind exit and shutdown
+        # - GUI daemon_monitor_task will detect daemon exit and shutdown GUI
+        print("✅ Shutdown sequence completed - cascade in progress...")
 
         return response.json({
             "success": True,

@@ -179,7 +179,7 @@ class StateManager {
         if (this.state.isFilterActive && this.state.filterText) {
             const filterLower = this.state.filterText.toLowerCase();
             filteredLines = filteredLines.filter(line => 
-                line.cleanText.toLowerCase().includes(filterLower)
+                line.htmlContent.toLowerCase().includes(filterLower)
             );
         }
         
@@ -201,7 +201,7 @@ class StateManager {
                 originalIndex: this.state.lines.indexOf(line),
                 filteredIndex: index
             }))
-            .filter(item => item.line.cleanText.toLowerCase().includes(searchLower));
+            .filter(item => item.line.htmlContent.toLowerCase().includes(searchLower));
     }
     
     /**

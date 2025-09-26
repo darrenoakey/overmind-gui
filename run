@@ -3,7 +3,7 @@
 Overmind GUI Web Application Runner
 
 This script provides access to all application functionality including:
-- Running the web server
+- Running the backend (which manages daemon connection)
 - Running tests
 - Development commands
 - Deployment commands
@@ -12,22 +12,22 @@ Usage:
     ./run [command] [options]
 
 Commands:
-    server          Start the web server (default - looks for Procfile in current dir)
-    server <path>   Start the web server from a specific directory (looks for Procfile there)
-    test_proc       Run server with demo Procfile for testing (copies to output/test-run)
+    server          Start the backend server (default - looks for Procfile in current dir)
+    server <path>   Start the backend server from a specific directory (looks for Procfile there)
+    test_proc       Run backend with demo Procfile for testing (copies to output/test-run)
     integration     Run full integration test (requires: pip install playwright selenium)
     test           Run all tests
     test <module>  Run tests for specific module
     lint           Run linting
     setup          Install dependencies and setup
-    dev            Start development server with debug
+    dev            Start development backend with debug
     help           Show this help message
 
 Examples:
-    ./run                           # Start web server, use current dir's Procfile
-    ./run server                    # Start web server, use current dir's Procfile
-    ./run server /path/to/real/app  # Start web server, use Procfile in /path/to/real/app
-    ./run test_proc                 # Run server with demo Procfile (logs go to output/)
+    ./run                           # Start backend, use current dir's Procfile
+    ./run server                    # Start backend, use current dir's Procfile
+    ./run server /path/to/real/app  # Start backend, use Procfile in /path/to/real/app
+    ./run test_proc                 # Run backend with demo Procfile (logs go to output/)
     ./run integration               # Run full integration test with browser automation
     ./run test                      # Run all tests
     ./run test utils                # Run tests for utils module
@@ -57,12 +57,12 @@ def setup_dependencies():
         sys.exit(1)
 
 def run_server(debug=False, server_path=None):
-    """Start the web server"""
+    """Start the backend server"""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     main_py_path = os.path.join(script_dir, "src", "main.py")
 
     if server_path:
-        print(f"Starting Overmind GUI Web Server from {server_path}...")
+        print(f"Starting Overmind GUI Backend from {server_path}...")
         if not os.path.isdir(server_path):
             print(f"✗ Directory not found: {server_path}")
             sys.exit(1)
@@ -75,14 +75,14 @@ def run_server(debug=False, server_path=None):
 
         working_dir = server_path
     else:
-        print("Starting Overmind GUI Web Server from current directory...")
+        print("Starting Overmind GUI Backend from current directory...")
         if not os.path.exists("Procfile"):
             print("✗ Procfile not found in current directory")
             sys.exit(1)
 
         working_dir = os.getcwd()
 
-    # Always use the main.py from src/
+    # Always use main.py from src/
     if not os.path.exists(main_py_path):
         print(f"✗ main.py not found at {main_py_path}")
         sys.exit(1)
@@ -97,10 +97,10 @@ def run_server(debug=False, server_path=None):
         print(f"Running: {main_py_path}")
         subprocess.run([sys.executable, main_py_path], env=env, cwd=working_dir, check=True)
     except subprocess.CalledProcessError as e:
-        print(f"✗ Server failed to start: {e}")
+        print(f"✗ Backend failed to start: {e}")
         sys.exit(1)
     except KeyboardInterrupt:
-        print("\n✓ Server stopped")
+        print("\n✓ Backend stopped")
 
 def run_tests(module=None):
     """Run tests"""
