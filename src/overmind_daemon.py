@@ -351,12 +351,12 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description='Overmind Daemon - Independent overmind process manager')
-    parser.add_argument('--working - dir', '-d', type=str, help='Working directory (default: current directory)')
-    parser.add_argument('--api - port', '-p', type=int, help='API port (default: auto - detect)')
-    parser.add_argument('--log - level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+    parser.add_argument('--working-dir', '-d', type=str, help='Working directory (default: current directory)')
+    parser.add_argument('--api-port', '-p', type=int, help='API port (default: auto-detect)')
+    parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                        default='INFO', help='Log level')
-    parser.add_argument('--overmind - args', type=str,
-                       help='Additional arguments to pass to overmind (space - separated)')
+    parser.add_argument('--overmind-args', type=str,
+                       help='Additional arguments to pass to overmind (space-separated)')
 
     args, unknown_args = parser.parse_known_args()
 

@@ -56,7 +56,8 @@ class DaemonOvermindManager:
         self.last_output_time = time.time()
 
         # Producer - consumer queue for fast output handling
-        self.output_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
+        # Use much larger queue to handle bulk output (20k+ lines)
+        self.output_queue: asyncio.Queue = asyncio.Queue(maxsize=50000)
         self.poison_pill = object()  # Sentinel value to stop consumers
 
         # Monitoring tasks
@@ -149,7 +150,7 @@ class DaemonOvermindManager:
 
         try:
             # Build overmind start command
-            cmd = ["overmind", "start", "--any - can - die", "--no - port"] + self.overmind_args
+            cmd = ["overmind", "start", "--any-can-die", "--no-port"] + self.overmind_args
 
             if self.overmind_args:
                 logger.info(f"Using additional overmind arguments: {' '.join(self.overmind_args)}")
@@ -176,9 +177,28 @@ class DaemonOvermindManager:
 
             # Check if process is still running
             if self.overmind_process.returncode is not None:
-                logger.error(f"Overmind process exited immediately with code: {self.overmind_process.returncode}")
-                self.is_running = False
-                return False
+                if self.overmind_process.returncode == 0:
+                    # Overmind completed successfully (batch job scenario)
+                    logger.info(f"Overmind process completed successfully with code: {self.overmind_process.returncode}")
+                    # Continue processing - we'll handle shutdown after queue is empty
+                else:
+                    # Try to read any error output before failing
+                    try:
+                        error_output = await asyncio.wait_for(
+                            self.overmind_process.stdout.read(4096),
+                            timeout=1.0
+                        )
+                        if error_output:
+                            error_text = error_output.decode('utf-8', errors='replace')
+                            logger.error(f"Overmind process failed with code: {self.overmind_process.returncode}")
+                            logger.error(f"Overmind error output: {error_text}")
+                        else:
+                            logger.error(f"Overmind process failed with code: {self.overmind_process.returncode} (no error output)")
+                    except Exception as e:
+                        logger.error(f"Overmind process failed with code: {self.overmind_process.returncode} (could not read error: {e})")
+
+                    self.is_running = False
+                    return False
 
             # Load processes from Procfile
             await self._load_procfile_processes()
@@ -304,7 +324,7 @@ class DaemonOvermindManager:
                 if not chunk:
                     # No more data - check if process is still running
                     if self.overmind_process.returncode is not None:
-                        logger.warning(f"🛑 Overmind process ended with code {self.overmind_process.returncode}")
+                        logger.info(f"🛑 Overmind process ended with code {self.overmind_process.returncode}")
                         # Try one more read to drain any remaining data
                         try:
                             final_chunk = await asyncio.wait_for(
@@ -314,8 +334,12 @@ class DaemonOvermindManager:
                             if final_chunk:
                                 chunk = final_chunk
                             else:
+                                # Process finished and no more data
+                                await self._wait_for_queue_processing()
                                 break
                         except asyncio.TimeoutError:
+                            # Process finished and no more data
+                            await self._wait_for_queue_processing()
                             break
                     else:
                         # Process still running but no data yet
@@ -332,7 +356,39 @@ class DaemonOvermindManager:
                 # Save it for next iteration
                 incomplete_line = lines[-1]
 
-                # Process all complete lines
+                # Instead of processing individual lines, pass raw blocks to database writers
+                # This prevents bottlenecks when bulk scripts output thousands of lines at once
+                if lines[:-1]:  # If we have complete lines
+                    raw_block = b'\n'.join(lines[:-1])
+                    if raw_block.strip():  # Only process non-empty blocks
+                        try:
+                            # Count the lines in this block for monitoring
+                            line_count = len([line for line in lines[:-1] if line.strip()])
+
+                            # Queue the entire raw block for processing
+                            await self.output_queue.put({
+                                'type': 'raw_block',
+                                'data': raw_block,
+                                'timestamp': time.time(),
+                                'line_count': line_count
+                            })
+
+                            # Update stats for the block
+                            for line_bytes in lines[:-1]:
+                                if line_bytes.strip():
+                                    try:
+                                        line_str = line_bytes.decode('utf-8', errors='replace')
+                                        process_name = self._extract_process_name(line_str)
+                                        process_line_counts[process_name] = process_line_counts.get(process_name, 0) + 1
+                                        total_lines += 1
+                                    except Exception:
+                                        pass
+
+                        except Exception as e:
+                            logger.error(f"Error queuing raw block: {e}")
+                        continue
+
+                # Process all complete lines (old method for debugging)
                 for line_bytes in lines[:-1]:
                     # Decode with error handling
                     try:
@@ -462,10 +518,38 @@ class DaemonOvermindManager:
             cursor.execute("BEGIN TRANSACTION")
 
             # Prepare batch data for insertion (no timestamp in database schema)
-            batch_data = [
-                (item['process_name'], item['html_content'])
-                for item in batch
-            ]
+            batch_data = []
+            for item in batch:
+                if item.get('type') == 'raw_block':
+                    # Parse raw block into individual lines
+                    raw_data = item['data']
+                    try:
+                        # Decode the raw block
+                        if isinstance(raw_data, bytes):
+                            text_data = raw_data.decode('utf-8', errors='replace')
+                        else:
+                            text_data = str(raw_data)
+
+                        logger.debug(f"Processing raw block with {len(text_data.split(chr(10)))} lines")
+
+                        # Split into individual lines and process each
+                        line_count = 0
+                        for line_str in text_data.split('\n'):
+                            if line_str.strip():  # Skip empty lines
+                                # Extract process name and convert to HTML
+                                process_name, html_content = self._parse_line_for_storage(line_str.strip())
+                                batch_data.append((process_name, html_content))
+                                line_count += 1
+
+                        logger.info(f"Raw block processed: {line_count} lines added to batch")
+                    except Exception as e:
+                        logger.error(f"Error processing raw block: {e}", exc_info=True)
+                        continue
+                else:
+                    # Legacy individual line format
+                    batch_data.append((item['process_name'], item['html_content']))
+
+            logger.info(f"Batch ready for database: {len(batch_data)} total lines")
 
             # Bulk insert all lines at once
             cursor.executemany(
@@ -497,6 +581,70 @@ class DaemonOvermindManager:
                     conn.rollback()
             except Exception:
                 pass
+
+    async def _wait_for_queue_processing(self):
+        """Wait for all queued output to be processed before shutdown"""
+        logger.info(f"Waiting for queue processing - current queue size: {self.output_queue.qsize()}")
+
+        # Wait for the queue to be mostly empty (allowing for some in-flight processing)
+        max_wait_time = 10.0  # Maximum 10 seconds to wait
+        wait_start = time.time()
+
+        while self.output_queue.qsize() > 0 and (time.time() - wait_start) < max_wait_time:
+            logger.debug(f"Queue size: {self.output_queue.qsize()}, waiting for processing...")
+            await asyncio.sleep(0.1)
+
+        # Give a final moment for any in-flight database writes to complete
+        if self.output_queue.qsize() > 0:
+            logger.warning(f"Queue still has {self.output_queue.qsize()} items after {max_wait_time}s wait")
+        else:
+            logger.info("Queue processing complete")
+
+        # Wait longer for final database writes to complete and commit
+        logger.info("Waiting for database writers to complete...")
+        await asyncio.sleep(2.0)  # Increased wait time for database writes
+
+        # Force database commits by sending poison pills to writers
+        for i in range(len(self._db_writer_tasks)):
+            try:
+                await self.output_queue.put(self.poison_pill)
+            except Exception:
+                pass  # Queue might be closed
+
+        # Wait a bit more for writers to handle poison pills
+        await asyncio.sleep(1.0)
+        logger.info("Database writer shutdown complete")
+
+    def _parse_line_for_storage(self, line: str) -> tuple:
+        """Parse a line and return (process_name, html_content) for database storage"""
+        # Extract process name from overmind's ANSI-colored output
+        process_name = "system"
+        html_content = line
+
+        # Parse overmind's output format: "processname | content"
+        if " | " in line:
+            parts = line.split(" | ", 1)
+            if len(parts) == 2:
+                process_part = parts[0].strip()
+
+                # Remove ANSI color codes from process name to get actual process name
+                import re
+                ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+                potential_process = ansi_escape.sub('', process_part).strip()
+
+                # Handle edge case: if processes not loaded yet, try to match against known names
+                known_processes = ['temporal', 'backend', 'web', 'worker', 'helper', 'storybook',
+                                   'bulk_test']  # Add our test process
+
+                if potential_process in known_processes or potential_process in self.processes:
+                    process_name = potential_process
+                    html_content = line  # Keep full ANSI-colored output for HTML display
+                else:
+                    # Fallback: use the process part but keep full line
+                    process_name = potential_process if potential_process else "system"
+                    html_content = line
+
+        return process_name, html_content
 
     async def _process_output_line(self, line: str):
         """Process and queue a single output line for database writing"""
