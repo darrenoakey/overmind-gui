@@ -3,8 +3,7 @@
 
 import asyncio
 import unittest
-import sys
-import os
+from event_handlers import startup_handler, shutdown_handler
 
 
 class TestController:
@@ -40,10 +39,7 @@ class TestEventHandlers(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures"""
-        # Add the directory containing the module to Python path
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        import event_handlers
-        self.event_handlers = event_handlers
+        pass
 
     def test_startup_handler_without_controller(self):
         """Test startup handler when no overmind controller is present"""
@@ -52,7 +48,7 @@ class TestEventHandlers(unittest.TestCase):
 
         # Run the async function
         async def run_test():
-            await self.event_handlers.startup_handler(app, None)
+            await startup_handler(app, None)
 
         # Should complete without error
         asyncio.run(run_test())
@@ -66,7 +62,7 @@ class TestEventHandlers(unittest.TestCase):
 
         # Run the async function
         async def run_test():
-            await self.event_handlers.startup_handler(app, None)
+            await startup_handler(app, None)
 
         asyncio.run(run_test())
 
@@ -80,7 +76,7 @@ class TestEventHandlers(unittest.TestCase):
 
         # Run the async function
         async def run_test():
-            await self.event_handlers.shutdown_handler(app, None)
+            await shutdown_handler(app, None)
 
         # Should complete without error
         asyncio.run(run_test())
@@ -94,7 +90,7 @@ class TestEventHandlers(unittest.TestCase):
 
         # Run the async function
         async def run_test():
-            await self.event_handlers.shutdown_handler(app, None)
+            await shutdown_handler(app, None)
 
         asyncio.run(run_test())
 
