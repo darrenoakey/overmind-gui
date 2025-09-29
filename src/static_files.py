@@ -125,31 +125,31 @@ def setup_static_routes(app: Sanic):
                        content_type="application/javascript", status=404)
 
     # High - performance architecture files
-    @app.route("/state - manager.js", name="state_manager_js")
+    @app.route("/state-manager.js", name="state_manager_js")
     async def state_manager_js(_request):
         """Serve state manager JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "state - manager.js"),
+            return await file(os.path.join(script_dir, "state-manager.js"),
                              mime_type="application/javascript")
         except FileNotFoundError:
             return text("// state - manager.js file not found",
                        content_type="application/javascript", status=404)
 
-    @app.route("/virtual - list.js", name="virtual_list_js")
+    @app.route("/virtual-list.js", name="virtual_list_js")
     async def virtual_list_js(_request):
         """Serve virtual list JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "virtual - list.js"),
+            return await file(os.path.join(script_dir, "virtual-list.js"),
                              mime_type="application/javascript")
         except FileNotFoundError:
             return text("// virtual - list.js file not found",
                        content_type="application/javascript", status=404)
 
-    @app.route("/data - processor.worker.js", name="data_processor_worker_js")
+    @app.route("/data-processor.worker.js", name="data_processor_worker_js")
     async def data_processor_worker_js(_request):
         """Serve data processor web worker file"""
         try:
-            return await file(os.path.join(script_dir, "data - processor.worker.js"),
+            return await file(os.path.join(script_dir, "data-processor.worker.js"),
                              mime_type="application/javascript")
         except FileNotFoundError:
             return text("// data - processor.worker.js file not found",
