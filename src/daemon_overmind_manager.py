@@ -4,13 +4,8 @@ Daemon Overmind Manager - Simplified file-based output capture
 
 import asyncio
 import os
-import signal
 import subprocess
-import sys
-import time
-import threading
-import uuid
-from typing import Dict, List, Optional
+from typing import List
 
 # Configure logging
 import logging
@@ -84,7 +79,8 @@ class DaemonOvermindManager:
             # Check if process is still running
             if self.overmind_process.returncode is not None:
                 if self.overmind_process.returncode == 0:
-                    logger.info(f"Overmind process completed successfully with code: {self.overmind_process.returncode}")
+                    logger.info(f"Overmind process completed successfully with code: "
+                                f"{self.overmind_process.returncode}")
                 else:
                     # Read error from output file
                     try:
@@ -94,9 +90,11 @@ class DaemonOvermindManager:
                             logger.error(f"Overmind process failed with code: {self.overmind_process.returncode}")
                             logger.error(f"Overmind output: {error_text[-1000:]}")  # Last 1000 chars
                         else:
-                            logger.error(f"Overmind process failed with code: {self.overmind_process.returncode} (no output file)")
+                            logger.error(f"Overmind process failed with code: {self.overmind_process.returncode} "
+                                         f"(no output file)")
                     except Exception as e:
-                        logger.error(f"Overmind process failed with code: {self.overmind_process.returncode} (could not read output: {e})")
+                        logger.error(f"Overmind process failed with code: {self.overmind_process.returncode} "
+                                     f"(could not read output: {e})")
 
                     self.is_running = False
                     return False
