@@ -16,15 +16,7 @@ import subprocess
 import time
 import logging
 from typing import Optional, Callable, Dict, Any, List
-from datetime import datetime
 
-# Try to import psutil for enhanced process management
-try:
-    import psutil
-    HAS_PSUTIL = True
-except ImportError:
-    HAS_PSUTIL = False
-    print("Warning: psutil not available - child process cleanup will be limited")
 
 from daemon_config import daemon_config
 
@@ -63,13 +55,18 @@ class DaemonOvermindManager:
         self.line_buffer = []
         self.last_output_time = time.time()
 
+        # Producer - consumer queue for fast output handling
+        self.output_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
+        self.poison_pill = object()  # Sentinel value to stop consumers
+
         # Monitoring tasks
         self._output_task: Optional[asyncio.Task] = None
         self._status_monitor_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._cleanup_task: Optional[asyncio.Task] = None
+        self._db_writer_tasks: List[asyncio.Task] = []  # Database writer consumer tasks
 
-        # Callbacks for real-time updates (for future API clients)
+        # Callbacks for real - time updates (for future API clients)
         self.output_callbacks: List[Callable] = []
         self.status_callbacks: List[Callable] = []
 
@@ -80,11 +77,11 @@ class DaemonOvermindManager:
         logger.info(f"Working directory: {self.working_directory}")
 
     def add_output_callback(self, callback: Callable):
-        """Add callback for real-time output updates"""
+        """Add callback for real - time output updates"""
         self.output_callbacks.append(callback)
 
     def add_status_callback(self, callback: Callable):
-        """Add callback for real-time status updates"""
+        """Add callback for real - time status updates"""
         self.status_callbacks.append(callback)
 
     def get_colored_env(self) -> Dict[str, str]:
@@ -93,7 +90,7 @@ class DaemonOvermindManager:
 
         # Only set minimal color support - let overmind choose its own colors
         if 'TERM' not in env or not env['TERM']:
-            env['TERM'] = 'xterm-256color'
+            env['TERM'] = 'xterm - 256color'
         if 'COLORTERM' not in env:
             env['COLORTERM'] = 'truecolor'
 
@@ -134,7 +131,7 @@ class DaemonOvermindManager:
         if os.path.exists(socket_file):
             # Only remove socket file if we're in a temporary test directory
             # This prevents accidentally killing other overmind instances
-            is_test_dir = 'overmind-daemon-test-' in self.working_directory or '/tmp' in self.working_directory
+            is_test_dir = 'overmind - daemon - test-' in self.working_directory or '/tmp' in self.working_directory
 
             if is_test_dir:
                 logger.warning(f"Socket file {socket_file} already exists in test directory")
@@ -152,7 +149,7 @@ class DaemonOvermindManager:
 
         try:
             # Build overmind start command
-            cmd = ["overmind", "start", "--any-can-die", "--no-port"] + self.overmind_args
+            cmd = ["overmind", "start", "--any - can - die", "--no - port"] + self.overmind_args
 
             if self.overmind_args:
                 logger.info(f"Using additional overmind arguments: {' '.join(self.overmind_args)}")
@@ -192,6 +189,11 @@ class DaemonOvermindManager:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             self._cleanup_task = asyncio.create_task(self._periodic_cleanup_loop())
 
+            # Start database writer consumer tasks (3 concurrent writers for fast processing)
+            for i in range(3):
+                writer_task = asyncio.create_task(self._database_writer_consumer(f"writer-{i}"))
+                self._db_writer_tasks.append(writer_task)
+
             # Log startup event
             self._log_daemon_event("overmind_started", {
                 "pid": self.overmind_process.pid,
@@ -216,8 +218,13 @@ class DaemonOvermindManager:
         self.is_stopping = True
         logger.info("Stopping overmind and monitoring tasks...")
 
+        # Send poison pill to stop database writers
+        await self.output_queue.put(self.poison_pill)
+
         # Cancel monitoring tasks
-        for task in [self._output_task, self._status_monitor_task, self._heartbeat_task, self._cleanup_task]:
+        all_tasks = [self._output_task, self._status_monitor_task,
+                      self._heartbeat_task, self._cleanup_task] + self._db_writer_tasks
+        for task in all_tasks:
             if task and not task.done():
                 task.cancel()
                 try:
@@ -282,40 +289,79 @@ class DaemonOvermindManager:
         # Track lines per process to implement UI limit optimization
         process_line_counts = {}
 
+        # Buffer for incomplete lines when reading chunks
+        incomplete_line = b''
+
         try:
-            while self.is_running and self.overmind_process.returncode is None:
-                line = await self.overmind_process.stdout.readline()
-                if not line:
-                    # No more data - overmind process ended
-                    logger.warning("🛑 Overmind process ended - no more output")
+            while self.is_running:
+                # Read in larger chunks (64KB) instead of line by line
+                # This prevents buffer overflow when processes output lots of data at once
+                try:
+                    chunk = await self.overmind_process.stdout.read(65536)
+                except asyncio.CancelledError:
                     break
 
-                # Decode with error handling
+                if not chunk:
+                    # No more data - check if process is still running
+                    if self.overmind_process.returncode is not None:
+                        logger.warning(f"🛑 Overmind process ended with code {self.overmind_process.returncode}")
+                        # Try one more read to drain any remaining data
+                        try:
+                            final_chunk = await asyncio.wait_for(
+                                self.overmind_process.stdout.read(65536),
+                                timeout=0.5
+                            )
+                            if final_chunk:
+                                chunk = final_chunk
+                            else:
+                                break
+                        except asyncio.TimeoutError:
+                            break
+                    else:
+                        # Process still running but no data yet
+                        await asyncio.sleep(0.01)
+                        continue
+
+                # Combine with any incomplete line from previous chunk
+                data = incomplete_line + chunk
+
+                # Split into lines
+                lines = data.split(b'\n')
+
+                # Last element might be incomplete if chunk ended mid - line
+                # Save it for next iteration
+                incomplete_line = lines[-1]
+
+                # Process all complete lines
+                for line_bytes in lines[:-1]:
+                    # Decode with error handling
+                    try:
+                        line_str = line_bytes.decode('utf - 8', errors='replace')
+                    except UnicodeDecodeError:
+                        line_str = line_bytes.decode('latin - 1', errors='replace')
+
+                    if line_str:
+                        # Extract process name for optimization
+                        process_name = self._extract_process_name(line_str)
+
+                        # Track line count for this process
+                        if process_name not in process_line_counts:
+                            process_line_counts[process_name] = 0
+                        process_line_counts[process_name] += 1
+
+                        # Process every line - the database and UI handle their own limits
+                        # We need to capture everything for accurate logging and debugging
+                        await self._process_output_line(line_str)
+
+            # Process any remaining incomplete line
+            if incomplete_line:
                 try:
-                    line_str = line.decode('utf-8', errors='replace').rstrip('\n')
-                except UnicodeDecodeError:
-                    line_str = line.decode('latin-1', errors='replace').rstrip('\n')
-
-                if line_str:
-                    # Extract process name for optimization
-                    process_name = self._extract_process_name(line_str)
-
-                    # Track line count for this process
-                    if process_name not in process_line_counts:
-                        process_line_counts[process_name] = 0
-                    process_line_counts[process_name] += 1
-
-                    # UI Optimization: Skip processing if this process has way too many lines
-                    # UI only keeps last 10k per process, so if we have >20k, skip older lines
-                    MAX_LINES_PER_PROCESS = 10000
-                    SKIP_THRESHOLD = MAX_LINES_PER_PROCESS * 2  # 20k lines
-
-                    if process_line_counts[process_name] > SKIP_THRESHOLD:
-                        # Only process every 10th line when way over limit (sampling)
-                        if process_line_counts[process_name] % 10 != 0:
-                            continue  # Skip this line
-
-                    await self._process_output_line(line_str)
+                    line_str = incomplete_line.decode('utf - 8', errors='replace')
+                    if line_str:
+                        process_name = self._extract_process_name(line_str)
+                        await self._process_output_line(line_str)
+                except (UnicodeDecodeError, AttributeError):
+                    pass  # Ignore decode errors on final incomplete line
 
             # Check if overmind died unexpectedly
             if self.overmind_process.returncode is not None:
@@ -341,10 +387,11 @@ class DaemonOvermindManager:
 
             # Log final statistics
             total_lines = sum(process_line_counts.values())
-            logger.info(f"📊 Output monitoring final stats: {total_lines} total lines across {len(process_line_counts)} processes")
+            logger.info(f"📊 Output monitoring final stats: {total_lines} total lines "
+                        f"across {len(process_line_counts)} processes")
             for proc, count in process_line_counts.items():
-                if count > MAX_LINES_PER_PROCESS:
-                    logger.info(f"  📈 {proc}: {count} lines (exceeded UI limit)")
+                if count > 1000:  # Only log processes with significant output
+                    logger.info(f"  📈 {proc}: {count} lines")
 
     def _extract_process_name(self, line: str) -> str:
         """Extract process name from overmind output line for optimization tracking"""
@@ -361,12 +408,102 @@ class DaemonOvermindManager:
                     return clean_process
         return "system"  # Default for unparseable lines
 
+    async def _database_writer_consumer(self, name: str):
+        """Consumer task that writes queued lines to the database in large batches"""
+        logger.info(f"Database writer {name} started")
+        batch = []
+        batch_size = 1000  # Write in large batches for maximum efficiency
+        batch_timeout = 0.1  # Flush after 100ms of no new data
+
+        try:
+            while True:
+                try:
+                    # Get item from queue with timeout for batch flushing
+                    item = await asyncio.wait_for(self.output_queue.get(), timeout=batch_timeout)
+
+                    # Check for poison pill (shutdown signal)
+                    if item is self.poison_pill:
+                        # Put it back for other consumers
+                        await self.output_queue.put(self.poison_pill)
+                        break
+
+                    batch.append(item)
+
+                    # Write batch if it's full
+                    if len(batch) >= batch_size:
+                        await self._write_batch_to_database(batch)
+                        batch = []
+
+                except asyncio.TimeoutError:
+                    # Timeout - flush any pending batch
+                    if batch:
+                        await self._write_batch_to_database(batch)
+                        batch = []
+
+        except Exception as e:
+            logger.error(f"Database writer {name} error: {e}", exc_info=True)
+        finally:
+            # Flush any remaining items
+            if batch:
+                await self._write_batch_to_database(batch)
+            logger.info(f"Database writer {name} stopped")
+
+    async def _write_batch_to_database(self, batch: List[Dict]):
+        """Write a batch of lines to the database in a single transaction"""
+        if not batch:
+            return
+
+        try:
+            # Get database connection from the manager
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+
+            # Begin transaction for batch insert (much faster)
+            cursor.execute("BEGIN TRANSACTION")
+
+            # Prepare batch data for insertion (no timestamp in database schema)
+            batch_data = [
+                (item['process_name'], item['html_content'])
+                for item in batch
+            ]
+
+            # Bulk insert all lines at once
+            cursor.executemany(
+                "INSERT INTO output_lines (process, html) VALUES (?, ?)",
+                batch_data
+            )
+
+            # Commit transaction
+            conn.commit()
+
+            logger.debug(f"Wrote batch of {len(batch)} lines to database")
+
+            # Trigger real - time callbacks (after successful database write)
+            for item in batch:
+                for callback in self.output_callbacks:
+                    try:
+                        if asyncio.iscoroutinefunction(callback):
+                            await callback(item['process_name'], item['html_content'])
+                        else:
+                            callback(item['process_name'], item['html_content'])
+                    except Exception as e:
+                        logger.error(f"Error in output callback: {e}")
+
+        except Exception as e:
+            logger.error(f"Error writing batch to database: {e}", exc_info=True)
+            # Try to rollback on error
+            try:
+                if 'conn' in locals():
+                    conn.rollback()
+            except Exception:
+                pass
+
     async def _process_output_line(self, line: str):
-        """Process and store a single output line"""
+        """Process and queue a single output line for database writing"""
         timestamp = time.time()
         self.message_id_counter += 1
 
-        # Extract process name from overmind's ANSI-colored output
+        # Extract process name from overmind's ANSI - colored output
         process_name = "system"
         html_content = line
 
@@ -389,41 +526,44 @@ class DaemonOvermindManager:
 
                 # Handle edge case: if processes not loaded yet, try to match against known names
                 known_processes = ['temporal', 'backend', 'web', 'worker', 'helper', 'storybook',
-                                 'rse', 'rse2', 'ops-console-api', 'ops-console-web', 'awskeep', 'status']
+                                 'rse', 'rse2', 'ops - console - api', 'ops - console - web', 'awskeep', 'status']
 
                 # First check against loaded processes (preferred)
                 if potential_process in self.processes:
                     process_name = potential_process
                     logger.debug(f"✅ Matched process against loaded: {process_name}")
-                # Fallback: check against known process names
+                # Alternative: check against known process names
                 elif potential_process in known_processes:
                     process_name = potential_process
-                    logger.debug(f"✅ Matched process against known list: {process_name}")
+                    logger.debug(f"✅ Matched process against known list: "
+                                f"{process_name}")
                 else:
                     logger.debug(f"❌ Process '{potential_process}' not found. Loaded: {list(self.processes.keys())}, Known: {known_processes}")
 
         # Convert ANSI codes to HTML and store only HTML version
         html_content = self._convert_ansi_to_html(line)
 
-        # Store in database (only HTML, no raw processing needed ever again)
+        # Queue the line for database writing (decoupled from reading)
         try:
-            line_id = self.db.store_output_line(process_name, html_content)
+            # Create item to queue
+            item = {
+                'process_name': process_name,
+                'html_content': html_content,
+                'timestamp': timestamp,
+                'message_id': self.message_id_counter
+            }
 
-            # Notify callbacks for real-time updates
-            for callback in self.output_callbacks:
-                try:
-                    callback({
-                        'id': line_id,
-                        'timestamp': timestamp,
-                        'process_name': process_name,
-                        'html_content': html_content,
-                        'message_id': self.message_id_counter
-                    })
-                except Exception as e:
-                    logger.error(f"Error in output callback: {e}")
+            # Try to put item in queue without blocking
+            try:
+                self.output_queue.put_nowait(item)
+            except asyncio.QueueFull:
+                # Queue is full - log warning but keep reading to prevent pipe buffer overflow
+                logger.warning(f"Output queue full! Dropping line from {process_name}")
+                # In production, you might want to increase queue size or add overflow handling
 
         except Exception as e:
-            logger.error(f"Error storing output line: {e}")
+            # Queue errors shouldn't stop reading
+            logger.error(f"Failed to queue output line: {e}")
 
         self.last_output_time = timestamp
 
@@ -476,7 +616,8 @@ class DaemonOvermindManager:
                         if line_count > MAX_LINES_PER_PROCESS:
                             excess_lines = line_count - MAX_LINES_PER_PROCESS
                             # Remove oldest lines, keep newest MAX_LINES_PER_PROCESS
-                            self.db.cleanup_old_output_lines(process_name, MAX_LINES_PER_PROCESS)
+                            self.db.cleanup_old_output_lines(process_name,
+                                                            MAX_LINES_PER_PROCESS)
                             logger.info(f"🧹 Cleaned up {excess_lines} old lines for process '{process_name}' (kept {MAX_LINES_PER_PROCESS})")
                             cleaned_processes += 1
 
@@ -703,8 +844,8 @@ class DaemonOvermindManager:
             else:
                 logger.warning(f"'overmind quit' failed: {stderr.decode().strip()}")
 
-            # Fallback to signals if quit command didn't work
-            logger.info("Falling back to signal-based shutdown")
+            # Use signals if quit command didn't work
+            logger.info("Falling back to signal - based shutdown")
 
             # Try SIGINT first
             self.overmind_process.send_signal(signal.SIGINT)
@@ -729,7 +870,7 @@ class DaemonOvermindManager:
             # Force kill
             self.overmind_process.kill()
             await self.overmind_process.wait()
-            logger.warning("Overmind force-killed")
+            logger.warning("Overmind force - killed")
 
         except Exception as e:
             logger.error(f"Error during overmind shutdown: {e}")
@@ -742,7 +883,7 @@ class DaemonOvermindManager:
         # This prevents accidentally affecting other overmind instances
         socket_file = os.path.join(self.working_directory, ".overmind.sock")
         if os.path.exists(socket_file):
-            is_test_dir = 'overmind-daemon-test-' in self.working_directory or '/tmp' in self.working_directory
+            is_test_dir = 'overmind - daemon - test-' in self.working_directory or '/tmp' in self.working_directory
 
             if is_test_dir:
                 try:

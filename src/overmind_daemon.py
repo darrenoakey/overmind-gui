@@ -7,12 +7,11 @@ Key Features:
 - Runs overmind independently of GUI
 - Persistent SQLite storage for output and state
 - HTTP API for GUI client connections
-- Multi-client support with real-time updates
+- Multi - client support with real - time updates
 - Instance discovery and management
 """
 
 import asyncio
-import json
 import logging
 import os
 import signal
@@ -21,10 +20,7 @@ import sys
 import time
 import threading
 import uuid
-from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime
+from typing import Dict, List, Optional
 
 # Configure logging
 logging.basicConfig(
@@ -32,7 +28,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('overmind-daemon.log')
+        logging.FileHandler('overmind - daemon.log')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -81,7 +77,7 @@ class DatabaseManager:
         with self._lock:
             if thread_id not in self.connection_pool:
                 conn = sqlite3.connect(self.db_path)
-                conn.row_factory = sqlite3.Row  # Enable dict-like access
+                conn.row_factory = sqlite3.Row  # Enable dict - like access
                 self.connection_pool[thread_id] = conn
 
             return self.connection_pool[thread_id]
@@ -92,7 +88,7 @@ class DatabaseManager:
             for conn in self.connection_pool.values():
                 try:
                     conn.close()
-                except Exception as e:
+                except Exception:
                     # Ignore SQLite threading issues during shutdown
                     pass
             self.connection_pool.clear()
@@ -217,7 +213,7 @@ class DaemonInstance:
         self.overmind_manager = None
 
         # Write process ID file for backend discovery
-        self.pid_file = os.path.join(self.working_directory, 'overmind-daemon.pid')
+        self.pid_file = os.path.join(self.working_directory, 'overmind - daemon.pid')
         self._write_pid_file()
 
         logger.info(f"Daemon instance created: {self.instance_id}")
@@ -359,11 +355,11 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description='Overmind Daemon - Independent overmind process manager')
-    parser.add_argument('--working-dir', '-d', type=str, help='Working directory (default: current directory)')
-    parser.add_argument('--api-port', '-p', type=int, help='API port (default: auto-detect)')
-    parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+    parser.add_argument('--working - dir', '-d', type=str, help='Working directory (default: current directory)')
+    parser.add_argument('--api - port', '-p', type=int, help='API port (default: auto - detect)')
+    parser.add_argument('--log - level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                        default='INFO', help='Log level')
-    parser.add_argument('--overmind-args', type=str, help='Additional arguments to pass to overmind (space-separated)')
+    parser.add_argument('--overmind - args', type=str, help='Additional arguments to pass to overmind (space - separated)')
 
     args, unknown_args = parser.parse_known_args()
 

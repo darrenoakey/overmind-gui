@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Overmind GUI - Daemon-based web interface for Overmind process management
+Overmind GUI - Daemon - based web interface for Overmind process management
 
-A modern, daemon-based web interface for managing Overmind processes with:
+A modern, daemon - based web interface for managing Overmind processes with:
 - Connection to independent overmind daemon
 - Live process monitoring and control via polling
-- Real-time output streaming with 4x/sec updates
+- Real - time output streaming with 4x/sec updates
 - Advanced filtering and search
-- Modern CSS-based UI with 5000 line limit
+- Modern CSS - based UI with 5000 line limit
 - Automatic daemon discovery and connection management
 """
 
@@ -32,7 +32,7 @@ from process_manager import ProcessManager
 from daemon_manager import DaemonManager
 from database_client import DatabaseClient
 from static_files import setup_static_routes
-from api_routes_daemon import setup_api_routes
+from api_routes_daemon import setup_api_routes, handle_output_line, handle_status_update
 
 # -----------------------------------------------------------------------------
 # Suppress pkg_resources warning from tracerite/html
@@ -60,6 +60,8 @@ WORKING_DIRECTORY = None
 # -----------------------------------------------------------------------------
 # Port management
 # -----------------------------------------------------------------------------
+
+
 def find_available_port(start_port=DEFAULT_PORT_START, max_attempts=100):
     """Find an available port starting from start_port"""
     for port in range(start_port, start_port + max_attempts):
@@ -74,6 +76,8 @@ def find_available_port(start_port=DEFAULT_PORT_START, max_attempts=100):
 # -----------------------------------------------------------------------------
 # Version management
 # -----------------------------------------------------------------------------
+
+
 def get_and_increment_version():
     """Read current version, increment it, and return the new version"""
     # Get version file in the parent directory (root)
@@ -110,7 +114,7 @@ app.config.WORKERS = 1
 app.ctx.version = get_and_increment_version()
 print(f"Starting Overmind GUI (Daemon Mode) v{app.ctx.version}")
 
-# Initialize managers - simplified database-based architecture
+# Initialize managers - simplified database - based architecture
 app.ctx.process_manager = ProcessManager()
 app.ctx.daemon_manager = None  # Will be set when we know working directory
 app.ctx.database_client = None  # Will be set when we know working directory
@@ -127,6 +131,8 @@ shutdown_event = asyncio.Event()
 # -----------------------------------------------------------------------------
 # Shutdown message chain
 # -----------------------------------------------------------------------------
+
+
 async def shutdown_message_chain(app_instance):
     """Handle the proper shutdown message flow"""
     try:
@@ -178,10 +184,10 @@ async def shutdown_message_chain(app_instance):
         import traceback
         traceback.print_exc()
 
-        # Fallback: try to stop server anyway
+        # Emergency: try to stop server anyway
         try:
             app_instance.stop()
-        except:
+        except Exception:
             pass
 
 # -----------------------------------------------------------------------------
@@ -191,7 +197,11 @@ setup_static_routes(app)
 setup_api_routes(app)
 
 # Shutdown endpoint to stop the server
+
+
 @app.route("/shutdown", methods=["POST"])
+
+
 async def shutdown_server(request):
     """Shutdown the Sanic server"""
     try:
@@ -257,6 +267,8 @@ async def shutdown_server(request):
 # -----------------------------------------------------------------------------
 # Database polling helpers
 # -----------------------------------------------------------------------------
+
+
 def initialize_managers(app_instance, working_directory: str):
     """Initialize daemon and database managers once we know working directory"""
     app_instance.ctx.daemon_manager = DaemonManager(working_directory)
@@ -273,6 +285,7 @@ def initialize_managers(app_instance, working_directory: str):
 # -----------------------------------------------------------------------------
 # Background tasks
 # -----------------------------------------------------------------------------
+
 
 async def poll_overmind_status(app_instance):
     """Poll overmind status and update process manager"""
@@ -315,8 +328,9 @@ async def poll_overmind_status(app_instance):
         pass  # Silent timeout
     except FileNotFoundError:
         pass  # Overmind not available
-    except Exception as e:
+    except Exception:
         pass  # Silent error handling
+
 
 async def status_polling_task(app_instance):
     """Background task to poll overmind status every second"""
@@ -339,6 +353,7 @@ async def status_polling_task(app_instance):
         print(f"❌ Status polling task failed: {e}")
     finally:
         print("🏁 Status polling task completed")
+
 
 async def daemon_management_task(app_instance, working_directory: str):
     """Manage daemon lifecycle and database polling"""
@@ -444,6 +459,7 @@ async def daemon_management_task(app_instance, working_directory: str):
     finally:
         print("🏁 [DAEMON MANAGEMENT] Daemon management task completed")
 
+
 async def daemon_monitor_task(app_instance):
     """Monitor daemon process and trigger GUI shutdown when daemon exits"""
     try:
@@ -492,6 +508,7 @@ async def daemon_monitor_task(app_instance):
         import traceback
         traceback.print_exc()
 
+
 async def ui_launcher_task(app_instance):
     """Launch the UI subprocess"""
     proc = None
@@ -499,8 +516,6 @@ async def ui_launcher_task(app_instance):
         # ====================================================================
         # CRITICAL: Port must match ALLOCATED_PORT_DONT_CHANGE
         # ====================================================================
-        global ALLOCATED_PORT_DONT_CHANGE
-
         port_from_context = app_instance.ctx.UI_PORT
         port_from_global = ALLOCATED_PORT_DONT_CHANGE
 
@@ -554,9 +569,9 @@ async def ui_launcher_task(app_instance):
             # If the UI subprocess exited normally (code 0), it means user closed the window
             # Start the shutdown message chain
             if proc.returncode == 0 and not app_instance.ctx.shutdown_initiated:
-                print("\n" + "="*70)
+                print("\n" + "=" * 70)
                 print("🔴 UI SUBPROCESS EXITED - STARTING SHUTDOWN MESSAGE CHAIN")
-                print("="*70)
+                print("=" * 70)
 
                 # Step 1: Set flags and start daemon client shutdown
                 print("📨 [MESSAGE 1] UI closed → Starting daemon client shutdown...")
@@ -576,12 +591,14 @@ async def ui_launcher_task(app_instance):
             print(f"🔄 [UI LAUNCHER] Terminating UI subprocess (PID {proc.pid})")
             proc.kill()
             await proc.wait()
-            print(f"✅ [UI LAUNCHER] UI subprocess terminated")
+            print("✅ [UI LAUNCHER] UI subprocess terminated")
         print("🏁 [UI LAUNCHER] UI launcher task completed")
 
 # -----------------------------------------------------------------------------
 # Signal handling for graceful shutdown
 # -----------------------------------------------------------------------------
+
+
 def setup_signal_handlers(app_instance):
     """Setup signal handlers for graceful shutdown"""
     def signal_handler(sig, _frame):
@@ -597,11 +614,13 @@ def setup_signal_handlers(app_instance):
 # -----------------------------------------------------------------------------
 # Window close handler for webview
 # -----------------------------------------------------------------------------
+
+
 def on_window_closing():
     """Called when webview window is closing - trigger graceful shutdown"""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("🔴 WEBVIEW WINDOW CLOSING - SHUTDOWN SEQUENCE INITIATED")
-    print("="*70)
+    print("=" * 70)
 
     # Set the shutdown flag to trigger cleanup
     if not app.ctx.shutdown_initiated:
@@ -625,7 +644,11 @@ def on_window_closing():
 # -----------------------------------------------------------------------------
 # Lifecycle hooks
 # -----------------------------------------------------------------------------
+
+
 @app.before_server_start
+
+
 async def setup(app_instance, loop):
     """Set up the application before server starts"""
     app_instance.ctx.running = True
@@ -651,10 +674,13 @@ async def setup(app_instance, loop):
 
     app_instance.ctx.tasks.extend([t1, t2, t3, t4])
 
+
 @app.listener("after_server_start")
-async def launch_ui(_app, _loop):
+
+
+async def auto_launch_macos_app(_app, _loop):
     await asyncio.sleep(0.2)  # tiny grace so routes are live
-    # Try ~/Applications first, then /Applications as fallback
+    # Try ~/Applications first, then /Applications as secondary location
     home_app_path = os.path.expanduser("~/Applications/Overmind.app")
     system_app_path = "/Applications/Overmind.app"
 
@@ -665,25 +691,30 @@ async def launch_ui(_app, _loop):
     else:
         print(f"⚠️ Overmind.app not found in {home_app_path} or {system_app_path}")
 
+
 @app.before_server_stop
+
+
 async def cleanup(app_instance, _loop):
     """Final cleanup - should be minimal since main cleanup happens in shutdown endpoint"""
     if app_instance.ctx.shutdown_complete:
         print("✅ Clean shutdown - all resources already cleaned up")
         return
 
-    print("\n⚠️  [FALLBACK CLEANUP] Cleanup not completed by shutdown endpoint")
-    print("🧹 Performing minimal fallback cleanup...")
+    print("\n⚠️  [EMERGENCY CLEANUP] Cleanup not completed by shutdown endpoint")
+    print("🧹 Performing minimal emergency cleanup...")
 
-    # Only do essential cleanup that can't fail
+    # Only do essential cleanup that must complete
     app_instance.ctx.running = False
     app_instance.ctx.shutdown_complete = True
 
-    print("✅ Fallback cleanup completed")
+    print("✅ Emergency cleanup completed")
 
 # -----------------------------------------------------------------------------
-# UI-only launcher
+# UI - only launcher
 # -----------------------------------------------------------------------------
+
+
 def launch_ui(port: int, is_subprocess: bool = False):
     """Launch the desktop UI - uses system browser by default, pywebview if USE_PYTHON_WEBVIEW is set
 
@@ -723,7 +754,7 @@ def launch_ui(port: int, is_subprocess: bool = False):
     # pywebview path (when USE_PYTHON_WEBVIEW is enabled)
     try:
         # Check if webview is available
-        # pylint: disable=import-outside-toplevel,redefined-outer-name,reimported
+        # pylint: disable=import - outside - toplevel,redefined - outer - name,reimported
         import webview
     except ImportError:
         print("[UI] ERROR: pywebview is not installed!")
@@ -776,9 +807,9 @@ def launch_ui(port: int, is_subprocess: bool = False):
             if is_subprocess:
                 # For subprocess: simplified handler that just returns True
                 def on_subprocess_window_closing():
-                    print("\n" + "="*70)
+                    print("\n" + "=" * 70)
                     print("🔴 WEBVIEW SUBPROCESS WINDOW CLOSING")
-                    print("="*70)
+                    print("=" * 70)
                     print("🔄 Subprocess will exit and trigger main process shutdown")
                     return True
                 window.events.closing += on_subprocess_window_closing
@@ -800,13 +831,16 @@ def launch_ui(port: int, is_subprocess: bool = False):
 # -----------------------------------------------------------------------------
 # Entrypoint
 # -----------------------------------------------------------------------------
+
+
 def main():
     """Main entry point for the application"""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ui", action="store_true", help="UI-only mode")
-    parser.add_argument("--no-ui", action="store_true", help="Run server without UI")
-    parser.add_argument("--port", type=int, default=None, help="Port (auto-allocated if not specified)")
-    parser.add_argument("--working-dir", type=str, default=None, help="Working directory (defaults to current directory)")
+    parser.add_argument("--ui", action="store_true", help="UI - only mode")
+    parser.add_argument("--no - ui", action="store_true", help="Run server without UI")
+    parser.add_argument("--port", type=int, default=None, help="Port (auto - allocated if not specified)")
+    parser.add_argument("--working - dir", type=str, default=None,
+                        help="Working directory (defaults to current directory)")
 
     # Parse known args - we don't pass args to daemon since daemon is independent
     args, unknown_args = parser.parse_known_args()
@@ -825,11 +859,11 @@ def main():
         ALLOCATED_PORT_DONT_CHANGE = find_available_port(DEFAULT_PORT_START)
         print(f"🔌 ALLOCATED PORT: {ALLOCATED_PORT_DONT_CHANGE} (dynamically found)")
     else:
-        # Use user-specified port
+        # Use user - specified port
         ALLOCATED_PORT_DONT_CHANGE = args.port
         print(f"🔌 ALLOCATED PORT: {ALLOCATED_PORT_DONT_CHANGE} (user specified)")
 
-    # VERIFICATION: Double-check we have the right port
+    # VERIFICATION: Double - check we have the right port
     print(f"🔌 PORT VERIFICATION: ALLOCATED_PORT_DONT_CHANGE = {ALLOCATED_PORT_DONT_CHANGE}")
 
     # Store in app context (runtime variable, not a config file!)
@@ -852,7 +886,7 @@ def main():
         launch_ui(ALLOCATED_PORT_DONT_CHANGE, is_subprocess=True)
         return 0
 
-    print(f"Starting Overmind GUI (daemon-based) on {HOST}:{ALLOCATED_PORT_DONT_CHANGE}")
+    print(f"Starting Overmind GUI (daemon - based) on {HOST}:{ALLOCATED_PORT_DONT_CHANGE}")
     print("This GUI connects to an independent overmind daemon.")
     print("Make sure you have started an overmind daemon first with:")
     print("  python overmind_daemon.py")
@@ -861,7 +895,7 @@ def main():
         print(f"UI launch disabled - access the GUI at http://localhost:{ALLOCATED_PORT_DONT_CHANGE}")
         os.environ['NO_UI_LAUNCH'] = '1'
     else:
-        print("UI will launch automatically. Use --no-ui to disable.")
+        print("UI will launch automatically. Use --no - ui to disable.")
 
     print("Press Ctrl+C to stop")
 
@@ -898,6 +932,8 @@ def main():
 # -----------------------------------------------------------------------------
 # Tests
 # -----------------------------------------------------------------------------
+
+
 class TestOvermindGuiDaemon(unittest.TestCase):
     """Test cases for the Overmind GUI Daemon application"""
 

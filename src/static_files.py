@@ -20,12 +20,12 @@ def setup_static_routes(app: Sanic):
     @app.route("/")
     @app.route("/index.html", name="index_html")
     async def index(_request):
-        """Serve the high-performance HTML page"""
+        """Serve the high - performance HTML page"""
         try:
             return await file(os.path.join(script_dir, "index.html"), mime_type="text/html")
         except FileNotFoundError as exc:
             raise NotFound("index.html not found") from exc
-    
+
     # Legacy route for old version (if needed for debugging)
     @app.route("/v1", name="index_v1")
     @app.route("/old.html", name="index_old")
@@ -124,37 +124,37 @@ def setup_static_routes(app: Sanic):
             return text("// components.js file not found",
                        content_type="application/javascript", status=404)
 
-    # High-performance architecture files
-    @app.route("/state-manager.js", name="state_manager_js")
+    # High - performance architecture files
+    @app.route("/state - manager.js", name="state_manager_js")
     async def state_manager_js(_request):
         """Serve state manager JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "state-manager.js"),
+            return await file(os.path.join(script_dir, "state - manager.js"),
                              mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// state-manager.js file not found",
+            return text("// state - manager.js file not found",
                        content_type="application/javascript", status=404)
-    
-    @app.route("/virtual-list.js", name="virtual_list_js")
+
+    @app.route("/virtual - list.js", name="virtual_list_js")
     async def virtual_list_js(_request):
         """Serve virtual list JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "virtual-list.js"),
+            return await file(os.path.join(script_dir, "virtual - list.js"),
                              mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// virtual-list.js file not found",
+            return text("// virtual - list.js file not found",
                        content_type="application/javascript", status=404)
-    
-    @app.route("/data-processor.worker.js", name="data_processor_worker_js")
+
+    @app.route("/data - processor.worker.js", name="data_processor_worker_js")
     async def data_processor_worker_js(_request):
         """Serve data processor web worker file"""
         try:
-            return await file(os.path.join(script_dir, "data-processor.worker.js"),
+            return await file(os.path.join(script_dir, "data - processor.worker.js"),
                              mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// data-processor.worker.js file not found",
+            return text("// data - processor.worker.js file not found",
                        content_type="application/javascript", status=404)
-    
+
     @app.route("/constants.js", name="constants_js")
     async def constants_js(_request):
         """Serve constants JavaScript file"""
@@ -172,7 +172,7 @@ def setup_static_routes(app: Sanic):
             # Favicon should be in parent directory (root)
             root_dir = os.path.dirname(script_dir)
             return await file(os.path.join(root_dir, "favicon.ico"),
-                             mime_type="image/x-icon")
+                             mime_type="image/x - icon")
         except FileNotFoundError as exc:
             raise NotFound("Favicon not available") from exc
 

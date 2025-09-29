@@ -18,7 +18,7 @@ def find_free_port(start_port=8000, max_attempts=100):
         except OSError:
             continue
 
-    # If we can't find a port in the range, try system-assigned port
+    # If we can't find a port in the range, try system - assigned port
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(('', 0))
         return sock.getsockname()[1]

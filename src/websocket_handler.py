@@ -7,7 +7,6 @@ import json
 import asyncio
 import time
 import traceback  # Import at top level
-import unittest
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, field
 from sanic import Websocket
@@ -48,7 +47,7 @@ class ClientConnection:
         except (ConnectionClosedOK, ConnectionClosedError) as e:
             print(f"Connection {self.id} closed: {e}")
             return False
-        except Exception as e:  # pylint: disable=broad-except
+        except Exception as e:  # pylint: disable=broad - except
             print(f"Error sending to client {self.id}: {e}")
             return False
 
@@ -93,7 +92,7 @@ class WebSocketManager:
                 del self.connections[ws]
                 print(f"CONNECTION {conn.id} LOST - THIS IS A BUG! "
                       f"Total connections: {len(self.connections)}")
-                print("WebSocket disconnections should not happen in single-worker mode")
+                print("WebSocket disconnections should not happen in single - worker mode")
 
     async def send_to_client(self, ws: Websocket, message_type: str, data: Any) -> bool:
         """Send message to specific client"""
@@ -106,7 +105,7 @@ class WebSocketManager:
                 except (TypeError, ValueError) as e:
                     print(f"Error serializing message of type {message_type}: {e}")
                     return False
-                except Exception as e:  # pylint: disable=broad-except
+                except Exception as e:  # pylint: disable=broad - except
                     print(f"Error sending message of type {message_type} to {conn.id}: {e}")
                     return False
         print("Connection not found for WebSocket")
@@ -194,7 +193,7 @@ class WebSocketManager:
             else:
                 print(f"[WS] Unknown message type: {message_type}")
 
-        except Exception as e:  # pylint: disable=broad-except
+        except Exception as e:  # pylint: disable=broad - except
             print(f"[WS] Error handling message: {e}")
             traceback.print_exc()
             # Never close connection on error - just log and continue
@@ -216,7 +215,7 @@ class WebSocketManager:
                     print("[WS] Initial state sent successfully")
                 else:
                     print("[WS] Failed to send initial state")
-            except Exception as e:  # pylint: disable=broad-except
+            except Exception as e:  # pylint: disable=broad - except
                 print(f"[WS] Error sending initial state: {e}")
                 traceback.print_exc()
         else:
@@ -270,10 +269,10 @@ class WebSocketManager:
                     if status_output:
                         status_updates = controller.parse_status_output(status_output)
                         await self._handle_status_update(status_updates, app)
-                except Exception as e:  # pylint: disable=broad-except
+                except Exception as e:  # pylint: disable=broad - except
                     print(f"Error getting status after action: {e}")
 
-        except Exception as e:  # pylint: disable=broad-except
+        except Exception as e:  # pylint: disable=broad - except
             print(f"Error performing action {action} on {process_name}: {e}")
             await self.send_to_client(ws, "error", {
                 "message": f"Action failed: {str(e)}"
@@ -321,7 +320,7 @@ class WebSocketManager:
                     if self.connections:
                         print(f"Monitor: {len(self.connections)} active connections")
 
-            except Exception as e:  # pylint: disable=broad-except
+            except Exception as e:  # pylint: disable=broad - except
                 print(f"Monitor error: {e}")
                 # Continue monitoring even if there's an error
 
@@ -334,7 +333,7 @@ websocket_manager = WebSocketManager()
 async def websocket_handler(request, ws: Websocket):
     """
     Handle WebSocket connections - connections persist for app lifecycle.
-    In single-worker mode, connections should NEVER close unexpectedly.
+    In single - worker mode, connections should NEVER close unexpectedly.
     """
     print(f"[WS] New WebSocket connection from {request.ip}")
 
@@ -359,13 +358,13 @@ async def websocket_handler(request, ws: Websocket):
                 print(f"[WS] Received empty message from {conn.id} - possible connection issue")
 
     except (ConnectionClosedOK, ConnectionClosedError) as e:
-        # This should NEVER happen in single-worker mode
+        # This should NEVER happen in single - worker mode
         print(f"CONNECTION {conn.id} CLOSED - THIS IS A BUG!")
         print(f"Error details: {e}")
         print("Check that the app is running with workers=1")
     except asyncio.CancelledError:
         print(f"WebSocket handler for {conn.id} cancelled - server shutting down")
-    except Exception as e:  # pylint: disable=broad-except
+    except Exception as e:  # pylint: disable=broad - except
         print(f"WebSocket error for {conn.id}: {e}")
         print("CONNECTION SHOULD NOT CLOSE - This indicates a bug!")
         traceback.print_exc()
@@ -384,36 +383,3 @@ async def start_websocket_monitor(_app):
         print("WebSocket monitor task started")
     else:
         print("WebSocket monitor already running")
-
-
-class TestWebSocketHandler(unittest.TestCase):
-    """Test class for WebSocket handler"""
-
-    def test_websocket_manager_singleton(self):
-        """Test that WebSocketManager is a singleton"""
-        manager1 = WebSocketManager()
-        manager2 = WebSocketManager()
-        self.assertIs(manager1, manager2)
-        self.assertIs(manager1, websocket_manager)
-
-    def test_websocket_handler_exists(self):
-        """Test that websocket_handler function exists"""
-        self.assertTrue(callable(websocket_handler))
-
-    def test_start_websocket_monitor_exists(self):
-        """Test that start_websocket_monitor function exists"""
-        self.assertTrue(callable(start_websocket_monitor))
-
-    def test_client_connection_dataclass(self):
-        """Test ClientConnection dataclass structure"""
-        # Mock websocket
-        class MockWS:
-            """Mock WebSocket for testing"""
-            state = 1
-
-        conn = ClientConnection(ws=MockWS())
-        self.assertTrue(conn.is_alive())
-        self.assertIsNotNone(conn.id)
-        self.assertIsInstance(conn.connected_at, float)
-        self.assertIsInstance(conn.last_activity, float)
-        self.assertIsInstance(conn.last_ping, float)

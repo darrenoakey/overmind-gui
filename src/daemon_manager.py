@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Daemon Manager - Simple PID-based daemon lifecycle management
+Daemon Manager - Simple PID - based daemon lifecycle management
 Replaces the complex discovery system with simple PID file checking
 """
 
@@ -9,8 +9,10 @@ import signal
 import subprocess
 import time
 import logging
+import unittest
+import tempfile
+import shutil
 from typing import Optional
-import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,7 @@ class DaemonManager:
 
     def __init__(self, working_directory: str):
         self.working_directory = working_directory
-        self.pid_file = os.path.join(working_directory, 'overmind-daemon.pid')
+        self.pid_file = os.path.join(working_directory, 'overmind - daemon.pid')
 
     def is_daemon_running(self) -> bool:
         """Check if daemon is running by checking PID file and process"""
@@ -86,13 +88,13 @@ class DaemonManager:
                 return False
 
             # Build command
-            cmd = ['python', daemon_script, '--working-dir', self.working_directory]
+            cmd = ['python', daemon_script, '--working - dir', self.working_directory]
             if overmind_args:
                 cmd.extend(overmind_args)
 
             # Start daemon in background
             logger.info(f"Starting daemon with: {' '.join(cmd)}")
-            process = subprocess.Popen(
+            subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -192,9 +194,6 @@ class DaemonManager:
 
 
 # Tests
-import unittest
-import tempfile
-import shutil
 
 
 class TestDaemonManager(unittest.TestCase):
@@ -216,10 +215,10 @@ class TestDaemonManager(unittest.TestCase):
 
     def test_stale_pid_file_cleanup(self):
         """Test cleanup of stale PID files"""
-        # Create a fake PID file with non-existent PID
-        fake_pid = 999999  # Very unlikely to exist
+        # Create a PID file with non - existent PID
+        nonexistent_pid = 999999  # Very unlikely to exist
         with open(self.manager.pid_file, 'w') as f:
-            f.write(str(fake_pid))
+            f.write(str(nonexistent_pid))
 
         # Should detect it's stale and clean up
         self.assertFalse(self.manager.is_daemon_running())

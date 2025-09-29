@@ -7,7 +7,10 @@ Replaces HTTP API calls with direct database queries
 import sqlite3
 import os
 import time
-from typing import List, Dict, Optional, Tuple
+import unittest
+import tempfile
+import shutil
+from typing import List, Dict, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
@@ -34,7 +37,7 @@ class DatabaseClient:
         - If a process has 1M lines, only return the most recent 5000
 
         For incremental polling (since_id>0):
-        - Return all new lines since that ID (no per-process limit)
+        - Return all new lines since that ID (no per - process limit)
         """
         if not self.is_database_available():
             return []
@@ -59,7 +62,7 @@ class DatabaseClient:
                                   process_filter: List[str] = None,
                                   limit_per_process: int = 5000) -> List[Dict]:
         """
-        Get initial lines with per-process limiting
+        Get initial lines with per - process limiting
         If web has 1M lines and api has 4 lines, return latest 5000 web + 4 api = 5004 total
         """
         lines = []
@@ -93,12 +96,13 @@ class DatabaseClient:
         # Sort all lines by ID to maintain chronological order
         lines.sort(key=lambda x: x['id'])
 
-        logger.info(f"Initial load: {len(lines)} lines across {len(processes)} processes (max {limit_per_process} per process)")
+        logger.info(f"Initial load: {len(lines)} lines across {len(processes)} "
+                    f"processes (max {limit_per_process} per process)")
         return lines
 
     def _get_incremental_lines(self, cursor: sqlite3.Cursor, since_id: int,
                               process_filter: List[str] = None) -> List[Dict]:
-        """Get all lines since specified ID (no per-process limit for incremental)"""
+        """Get all lines since specified ID (no per - process limit for incremental)"""
         query = '''
             SELECT id, process, html
             FROM output_lines
@@ -169,9 +173,6 @@ class DatabaseClient:
 
 
 # Comprehensive tests
-import unittest
-import tempfile
-import shutil
 
 
 class TestDatabaseClient(unittest.TestCase):
@@ -207,7 +208,7 @@ class TestDatabaseClient(unittest.TestCase):
             conn.commit()
 
     def test_initial_load_with_limits(self):
-        """Test initial load respects per-process limits"""
+        """Test initial load respects per - process limits"""
         # Insert many lines for 'web' and few for 'api'
         lines = []
 
@@ -227,7 +228,7 @@ class TestDatabaseClient(unittest.TestCase):
         # Should get 5 web lines + 3 api lines = 8 total
         self.assertEqual(len(result), 8)
 
-        # Check we got the LATEST 5 web lines (5-9, not 0-4)
+        # Check we got the LATEST 5 web lines (5 - 9, not 0 - 4)
         web_lines = [r for r in result if r['process'] == 'web']
         self.assertEqual(len(web_lines), 5)
         self.assertIn('Web line 5', web_lines[0]['html'])  # Oldest of the 5 we kept
@@ -289,7 +290,7 @@ class TestDatabaseClient(unittest.TestCase):
         self.assertEqual(len(result), 1005)
 
         # Verify ordering (should be chronological)
-        self.assertTrue(all(result[i]['id'] < result[i+1]['id'] for i in range(len(result)-1)))
+        self.assertTrue(all(result[i]['id'] < result[i + 1]['id'] for i in range(len(result) - 1)))
 
     def test_process_stats(self):
         """Test process statistics"""

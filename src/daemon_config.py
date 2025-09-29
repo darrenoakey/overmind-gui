@@ -5,16 +5,15 @@ Handles settings, discovery, and instance management
 
 import json
 import os
-from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 
 class DaemonConfig:
     """Configuration manager for daemon settings and instance discovery"""
 
     def __init__(self, config_dir: str = None):
-        self.config_dir = config_dir or os.path.expanduser('~/.overmind-gui')
-        self.config_file = os.path.join(self.config_dir, 'daemon-config.json')
+        self.config_dir = config_dir or os.path.expanduser('~/.overmind - gui')
+        self.config_file = os.path.join(self.config_dir, 'daemon - config.json')
         self.instances_file = os.path.join(self.config_dir, 'instances.json')
 
         # Ensure config directory exists
@@ -78,7 +77,7 @@ class DaemonConfig:
             print(f"Warning: Could not save config file: {e}")
 
     def get(self, key_path: str, default=None):
-        """Get configuration value by dot-separated key path"""
+        """Get configuration value by dot - separated key path"""
         keys = key_path.split('.')
         value = self.config
 
@@ -91,7 +90,7 @@ class DaemonConfig:
         return value
 
     def set(self, key_path: str, value: Any):
-        """Set configuration value by dot-separated key path"""
+        """Set configuration value by dot - separated key path"""
         keys = key_path.split('.')
         config = self.config
 

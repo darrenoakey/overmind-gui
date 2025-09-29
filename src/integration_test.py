@@ -11,337 +11,21 @@ Tests the complete application flow:
 """
 
 import asyncio
-import os
-import subprocess
 import time
-import signal
 import sys
 from pathlib import Path
 
 
-def test_with_selenium():
-    """Integration test using Selenium (fallback if Playwright not available)"""
-    print("🧪 Running integration test with Selenium...")
-
-    try:
-        from selenium import webdriver
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.chrome.service import Service
-        from selenium.common.exceptions import TimeoutException, WebDriverException
-    except ImportError:
-        print("❌ Selenium not available. Install with: pip install selenium")
-        return False
-
-    # Setup test environment
-    script_dir = Path(__file__).parent
-    root_dir = script_dir.parent
-    test_dir = root_dir / "output" / "integration-test"
-    test_dir.mkdir(parents=True, exist_ok=True)
-
-    # Copy demo Procfile
-    demo_procfile = script_dir / "demo.Procfile"
-    test_procfile = test_dir / "Procfile"
-
-    if not demo_procfile.exists():
-        print(f"❌ Demo Procfile not found: {demo_procfile}")
-        return False
-
-    import shutil
-    shutil.copy2(demo_procfile, test_procfile)
-    print(f"✓ Copied demo Procfile to {test_procfile}")
-
-    server_process = None
-    browser = None
-
-    try:
-        # Start server process
-        print("🚀 Starting server process...")
-        main_py = script_dir / "main.py"
-
-        server_process = subprocess.Popen(
-            [sys.executable, str(main_py), "--no-ui", "--port", "0"],  # port 0 = auto-allocate
-            cwd=str(test_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            preexec_fn=os.setsid  # Create process group for clean shutdown
-        )
-
-        # Extract allocated port from server output
-        port = None
-        start_time = time.time()
-        timeout = 30
-
-        while time.time() - start_time < timeout:
-            if server_process.poll() is not None:
-                stdout, stderr = server_process.communicate()
-                print(f"❌ Server process exited early: {stderr}")
-                return False
-
-            # Try to read a line from stdout (non-blocking)
-            try:
-                # Use select on Unix systems for non-blocking read
-                import select
-                if select.select([server_process.stdout], [], [], 0.1)[0]:
-                    line = server_process.stdout.readline()
-                    if line:
-                        print(f"Server: {line.strip()}")
-                        if "🔌 ALLOCATED PORT:" in line:
-                            # Extract port number
-                            port = int(line.split("🔌 ALLOCATED PORT:")[1].split()[0])
-                            print(f"✓ Server allocated port: {port}")
-                            break
-            except:
-                time.sleep(0.1)
-
-        if port is None:
-            print("❌ Could not determine server port")
-            return False
-
-        # Wait for server to be ready
-        url = f"http://localhost:{port}"
-        print(f"⏳ Waiting for server to be ready at {url}...")
-
-        import requests
-        for _ in range(30):
-            try:
-                response = requests.get(url, timeout=2)
-                if response.status_code == 200:
-                    print("✓ Server is ready")
-                    break
-            except:
-                time.sleep(1)
-        else:
-            print("❌ Server failed to become ready")
-            return False
-
-        # Setup Chrome browser
-        print("🌐 Starting browser...")
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")  # Run headless
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-
-        try:
-            browser = webdriver.Chrome(options=chrome_options)
-        except WebDriverException:
-            print("❌ Chrome/ChromeDriver not available. Please install ChromeDriver")
-            return False
-
-        browser.set_page_load_timeout(30)
-
-        # Load the page
-        print(f"📄 Loading page: {url}")
-        browser.get(url)
-
-        # Wait for page to load
-        wait = WebDriverWait(browser, 10)
-
-        # Check that the main app loaded (look for specific elements)
-        print("🔍 Checking page loaded correctly...")
-
-        # Check for main container
-        wait.until(EC.presence_of_element_located((By.ID, "app")))
-        print("✓ Main app container found")
-
-        # Check for processes section (processes should appear)
-        processes_found = False
-        for attempt in range(10):  # Wait up to 10 seconds for processes
-            try:
-                process_elements = browser.find_elements(By.CLASS_NAME, "process-item")
-                if len(process_elements) > 0:
-                    processes_found = True
-                    print(f"✓ Found {len(process_elements)} processes on page")
-                    break
-            except:
-                pass
-            time.sleep(1)
-
-        if not processes_found:
-            # Try alternative selectors
-            try:
-                # Look for any process-related content
-                process_text_elements = browser.find_elements(By.XPATH, "//*[contains(text(), '[WEB]') or contains(text(), '[API]') or contains(text(), '[WORKER]')]")
-                if process_text_elements:
-                    processes_found = True
-                    print(f"✓ Found process output on page ({len(process_text_elements)} elements)")
-            except:
-                pass
-
-        if not processes_found:
-            print("⚠️  No processes visible on page (may be normal for short test)")
-
-        # Check for console errors (JavaScript 404s, etc.)
-        console_logs = browser.get_log('browser')
-        error_logs = [log for log in console_logs if log['level'] in ['SEVERE', 'ERROR']]
-
-        if error_logs:
-            print("⚠️  Browser console errors:")
-            for log in error_logs:
-                print(f"   {log['level']}: {log['message']}")
-        else:
-            print("✓ No browser console errors")
-
-        # Look for shutdown button and click it
-        print("🔘 Looking for shutdown button...")
-        shutdown_found = False
-
-        # Try different possible selectors for shutdown button
-        selectors = [
-            "button[onclick*='shutdown']",
-            "button:contains('Shutdown')",
-            "button:contains('Stop')",
-            ".shutdown-button",
-            "#shutdown-btn"
-        ]
-
-        for selector in selectors:
-            try:
-                if selector.startswith("button:contains"):
-                    # Use XPath for text-based selection
-                    text = selector.split("'")[1]
-                    button = browser.find_element(By.XPATH, f"//button[contains(text(), '{text}')]")
-                else:
-                    button = browser.find_element(By.CSS_SELECTOR, selector)
-
-                print(f"✓ Found shutdown button: {selector}")
-                button.click()
-                shutdown_found = True
-                print("✓ Clicked shutdown button")
-                break
-            except:
-                continue
-
-        if not shutdown_found:
-            print("⚠️  Shutdown button not found - trying manual shutdown")
-            # Fallback: send shutdown request directly
-            try:
-                response = requests.post(f"{url}/shutdown")
-                if response.status_code == 200:
-                    print("✓ Sent shutdown request via API")
-                    shutdown_found = True
-            except:
-                pass
-
-        # Wait for shutdown process to complete
-        print("⏳ Waiting for shutdown to complete...")
-        time.sleep(5)
-
-        # Check that .overmind.sock is gone
-        overmind_sock = test_dir / ".overmind.sock"
-        if overmind_sock.exists():
-            print("⚠️  .overmind.sock still exists after shutdown")
-        else:
-            print("✓ .overmind.sock removed")
-
-        # Check server process status and capture stderr
-        if server_process and server_process.poll() is None:
-            print("⚠️  Server process still running - waiting...")
-            try:
-                stdout, stderr = server_process.communicate(timeout=10)
-                print("✓ Server process terminated")
-
-                # Check stderr for errors during shutdown
-                if stderr:
-                    stderr_lines = stderr.strip().split('\n')
-                    error_lines = []
-                    for line in stderr_lines:
-                        line = line.strip()
-                        if line and not line.startswith('INFO:') and 'DEBUG:' not in line:
-                            # Filter out common non-error messages
-                            if not any(ignore in line.lower() for ignore in [
-                                'server stopped',
-                                'shutdown complete',
-                                'connection closed',
-                                'task was cancelled',
-                                'cleanup',
-                                'stopping'
-                            ]):
-                                error_lines.append(line)
-
-                    if error_lines:
-                        print("❌ ERRORS DETECTED during shutdown:")
-                        for error in error_lines[-10:]:  # Show last 10 error lines
-                            print(f"   ERROR: {error}")
-                        return False  # Test fails if shutdown has errors
-                    else:
-                        print("✓ Clean shutdown - no errors in stderr")
-                else:
-                    print("✓ Clean shutdown - no stderr output")
-
-            except subprocess.TimeoutExpired:
-                print("⚠️  Server process did not terminate in time")
-                # Force kill and capture any output
-                server_process.kill()
-                try:
-                    stdout, stderr = server_process.communicate(timeout=5)
-                    if stderr:
-                        print(f"❌ stderr during forced shutdown: {stderr}")
-                except:
-                    pass
-                return False
-        else:
-            print("✓ Server process terminated")
-            # Try to capture any final stderr
-            try:
-                stdout, stderr = server_process.communicate()
-                if stderr and stderr.strip():
-                    print(f"⚠️  Final stderr output: {stderr.strip()}")
-            except:
-                pass
-
-        print("✅ Integration test completed successfully!")
-        return True
-
-    except Exception as e:
-        print(f"❌ Integration test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-    finally:
-        # Cleanup
-        if browser:
-            try:
-                browser.quit()
-            except:
-                pass
-
-        if server_process:
-            try:
-                if server_process.poll() is None:
-                    # Kill the entire process group
-                    os.killpg(os.getpgid(server_process.pid), signal.SIGTERM)
-                    server_process.wait(timeout=5)
-            except:
-                try:
-                    if server_process.poll() is None:
-                        os.killpg(os.getpgid(server_process.pid), signal.SIGKILL)
-                except:
-                    pass
-
-
 async def test_with_playwright():
-    """Integration test using Playwright (preferred)"""
+    """Integration test using Playwright"""
     print("🧪 Running integration test with Playwright...")
 
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        print("❌ Playwright not available. Install with: pip install playwright")
-        print("   Then run: playwright install chromium")
-        return False
+    from playwright.async_api import async_playwright
 
     # Setup test environment
     script_dir = Path(__file__).parent
     root_dir = script_dir.parent
-    test_dir = root_dir / "output" / "integration-test"
+    test_dir = root_dir / "output" / "integration - test"
     test_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy demo Procfile
@@ -364,7 +48,7 @@ async def test_with_playwright():
         main_py = script_dir / "main.py"
 
         server_process = await asyncio.create_subprocess_exec(
-            sys.executable, str(main_py), "--no-ui", "--port", "0",  # port 0 = auto-allocate
+            sys.executable, str(main_py), "--no - ui", "--port", "0",  # port 0 = auto - allocate
             cwd=str(test_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
@@ -410,7 +94,7 @@ async def test_with_playwright():
                         if response.status == 200:
                             print("✓ Server is ready")
                             break
-                except:
+                except Exception:
                     await asyncio.sleep(1)
             else:
                 print("❌ Server failed to become ready")
@@ -439,7 +123,7 @@ async def test_with_playwright():
             processes_found = False
             for attempt in range(10):
                 # Look for process indicators
-                process_elements = await page.query_selector_all(".process-item")
+                process_elements = await page.query_selector_all(".process - item")
                 if process_elements:
                     processes_found = True
                     print(f"✓ Found {len(process_elements)} process items")
@@ -472,11 +156,11 @@ async def test_with_playwright():
 
             # Try to find shutdown button
             shutdown_selectors = [
-                "button:has-text('Shutdown')",
-                "button:has-text('Stop')",
+                "button:has - text('Shutdown')",
+                "button:has - text('Stop')",
                 "button[onclick*='shutdown']",
-                ".shutdown-button",
-                "#shutdown-btn"
+                ".shutdown - button",
+                "#shutdown - btn"
             ]
 
             for selector in shutdown_selectors:
@@ -488,7 +172,7 @@ async def test_with_playwright():
                         shutdown_found = True
                         print("✓ Clicked shutdown button")
                         break
-                except:
+                except Exception:
                     continue
 
             if not shutdown_found:
@@ -500,7 +184,7 @@ async def test_with_playwright():
                             if response.status == 200:
                                 print("✓ Sent shutdown request via API")
                                 shutdown_found = True
-                    except:
+                    except Exception:
                         pass
 
             await browser.close()
@@ -533,7 +217,7 @@ async def test_with_playwright():
                     for line in stderr_lines:
                         line = line.strip()
                         if line and not line.startswith('INFO:') and 'DEBUG:' not in line:
-                            # Filter out common non-error messages
+                            # Filter out common non - error messages
                             if not any(ignore in line.lower() for ignore in [
                                 'server stopped',
                                 'shutdown complete',
@@ -563,7 +247,7 @@ async def test_with_playwright():
                     stderr_data = await server_process.stderr.read()
                     if stderr_data:
                         print(f"❌ stderr during forced shutdown: {stderr_data.decode()}")
-                except:
+                except Exception:
                     pass
                 return False
         else:
@@ -575,7 +259,7 @@ async def test_with_playwright():
                     stderr_text = stderr_data.decode().strip()
                     if stderr_text:
                         print(f"⚠️  Final stderr output: {stderr_text}")
-            except:
+            except Exception:
                 pass
 
         print("✅ Integration test completed successfully!")
@@ -593,15 +277,15 @@ async def test_with_playwright():
             try:
                 server_process.terminate()
                 await asyncio.wait_for(server_process.wait(), timeout=5)
-            except:
+            except Exception:
                 try:
                     server_process.kill()
-                except:
+                except Exception:
                     pass
 
 
 def run_integration_test():
-    """Run the integration test with available tools"""
+    """Run the integration test with Playwright"""
     print("🧪 Starting Integration Test")
     print("=" * 50)
     print("Testing complete application lifecycle:")
@@ -612,27 +296,14 @@ def run_integration_test():
     print("5. Verify clean shutdown")
     print("=" * 50)
 
-    # Try Playwright first (preferred), then fall back to Selenium
-    try:
-        result = asyncio.run(test_with_playwright())
-        if result:
-            return True
-    except Exception as e:
-        print(f"Playwright test failed: {e}")
-
-    print("\nFalling back to Selenium...")
-    try:
-        result = test_with_selenium()
-        if result:
-            return True
-    except Exception as e:
-        print(f"Selenium test failed: {e}")
-
-    print("\n❌ Integration test failed with all available tools")
-    print("\nTo install testing dependencies:")
-    print("  pip install playwright selenium aiohttp requests")
-    print("  playwright install chromium")
-    return False
+    # Run Playwright test
+    result = asyncio.run(test_with_playwright())
+    if not result:
+        print("\n❌ Integration test failed")
+        print("\nTo install testing dependencies:")
+        print("  pip install playwright aiohttp requests")
+        print("  playwright install chromium")
+    return result
 
 
 if __name__ == "__main__":

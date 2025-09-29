@@ -120,7 +120,7 @@ class ProcessManager:
 
         if os.path.exists(config_path):
             try:
-                with open(config_path, "r", encoding="utf-8") as f:
+                with open(config_path, "r", encoding="utf - 8") as f:
                     self.warning_config = json.load(f)
                 print(f"Loaded warning config for {len(self.warning_config)} processes")
             except (json.JSONDecodeError, OSError) as e:
@@ -138,7 +138,7 @@ class ProcessManager:
         process_names = []
 
         try:
-            with open(procfile_path, "r", encoding="utf-8") as f:
+            with open(procfile_path, "r", encoding="utf - 8") as f:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith("#") and ":" in line:
@@ -212,7 +212,7 @@ class ProcessManager:
                 process_part = parts[0].strip()
 
                 # Clean process name (remove ANSI codes and timestamps)
-                clean_name = re.sub(r'\x1b\[[0-9;]*m', '', process_part)
+                clean_name = re.sub(r'\x1b\[[0 - 9;]*m', '', process_part)
                 clean_name = re.sub(r'\d{2}:\d{2}:\d{2}\s+', '', clean_name).strip()
 
                 if clean_name in self.processes:
@@ -444,7 +444,7 @@ class TestProcessManager(unittest.TestCase):
         self.assertEqual(process.output_lines[-1], "restarting process test")
         # Check that the 40 lines before the restart message are empty
         for i in range(40):
-            self.assertEqual(process.output_lines[-(41-i)], "")
+            self.assertEqual(process.output_lines[-(41 - i)], "")
 
     def test_get_stats(self):
         """Test getting process statistics"""

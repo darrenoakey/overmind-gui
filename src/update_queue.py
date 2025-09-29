@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
 Update Queue - Simple message queue for frontend/backend communication
-Simplified version that works with the new database-polling architecture
+Simplified version that works with the new database - polling architecture
 """
 
 import time
-from typing import Dict, List, Any
+from typing import Dict, Any
 import threading
 
 
 class UpdateQueue:
-    """Simple in-memory update queue for GUI communication"""
+    """Simple in - memory update queue for GUI communication"""
 
     def __init__(self):
         self.message_counter = 0
