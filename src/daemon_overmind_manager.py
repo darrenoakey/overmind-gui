@@ -6,6 +6,7 @@ import asyncio
 import os
 import subprocess
 from typing import List
+from ansi_to_html import AnsiToHtml
 
 # Configure logging
 import logging
@@ -36,6 +37,9 @@ class DaemonOvermindManager:
 
         # Process tracking (from procfile)
         self.processes = {}
+
+        # ANSI to HTML converter
+        self.ansi_converter = AnsiToHtml()
 
         logger.info(f"Daemon Overmind Manager initialized for instance {daemon_instance_id}")
         logger.info(f"Working directory: {self.working_directory}")
@@ -293,7 +297,9 @@ class DaemonOvermindManager:
     def _parse_line_for_storage(self, line: str) -> tuple:
         """Parse a line and return (process_name, html_content) for database storage"""
         process_name = "system"
-        html_content = line
+
+        # Convert ANSI escape sequences to HTML before storage
+        html_content = self.ansi_converter.convert(line)
 
         # Parse overmind's output format: "processname | content"
         if " | " in line:
@@ -311,10 +317,8 @@ class DaemonOvermindManager:
 
                 if potential_process in known_processes or potential_process in self.processes:
                     process_name = potential_process
-                    html_content = line  # Keep full ANSI-colored output for HTML display
                 else:
                     process_name = potential_process if potential_process else "system"
-                    html_content = line
 
         return process_name, html_content
 
