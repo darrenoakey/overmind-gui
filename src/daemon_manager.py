@@ -88,7 +88,7 @@ class DaemonManager:
                 return False
 
             # Build command
-            cmd = ['python', daemon_script, '--working - dir', self.working_directory]
+            cmd = ['python', daemon_script, '--working-dir', self.working_directory]
             if overmind_args:
                 cmd.extend(overmind_args)
 
