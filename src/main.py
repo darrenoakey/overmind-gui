@@ -828,9 +828,9 @@ def main():
     """Main entry point for the application"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--ui", action="store_true", help="UI - only mode")
-    parser.add_argument("--no - ui", action="store_true", help="Run server without UI")
+    parser.add_argument("--no-ui", action="store_true", help="Run server without UI")
     parser.add_argument("--port", type=int, default=None, help="Port (auto - allocated if not specified)")
-    parser.add_argument("--working - dir", type=str, default=None,
+    parser.add_argument("--working-dir", type=str, default=None,
                         help="Working directory (defaults to current directory)")
 
     # Parse known args - we don't pass args to daemon since daemon is independent
