@@ -116,7 +116,7 @@ class AnsiToHtml:
     def _process_ansi_sequence(self, sequence: str) -> str:
         """Process a single ANSI escape sequence"""
         # Extract parameters
-        match = re.match(r'\x1b\[([0 - 9;]*)([a - zA - Z])', sequence)
+        match = re.match(r'\x1b\[([0-9;]*)([a-zA-Z])', sequence)
         if not match:
             return ''
 
@@ -147,7 +147,7 @@ class AnsiToHtml:
 
             elif param == 1:
                 # Bold
-                result.append('<span style="font - weight: bold">')
+                result.append('<span style="font-weight: bold">')
                 self.span_stack.append('bold')
 
             elif param in self.ansi_to_256_map:
