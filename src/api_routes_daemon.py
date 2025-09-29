@@ -4,24 +4,20 @@ Provides endpoints for process management and polling updates using direct datab
 """
 
 import asyncio
-import json
 import os
-import re
 import time
 import unittest
-from typing import Dict, Any, Optional
+
 
 from sanic import Blueprint, response
 from sanic.request import Request
 from sanic.response import HTTPResponse
 
-from process_manager import ProcessManager
-from database_client import DatabaseClient
-from daemon_manager import DaemonManager
 from update_queue import update_queue
 
 # Create API blueprint
 api_bp = Blueprint("api", url_prefix="/api")
+
 
 @api_bp.route("/state", methods=["GET"])
 async def get_current_state(request: Request) -> HTTPResponse:
@@ -71,6 +67,7 @@ async def get_current_state(request: Request) -> HTTPResponse:
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
 
+
 @api_bp.route("/processes", methods=["GET"])
 async def get_processes(request: Request) -> HTTPResponse:
     """Get processes from process manager"""
@@ -85,6 +82,7 @@ async def get_processes(request: Request) -> HTTPResponse:
         error_msg = f"Error getting processes: {e}"
         print(f"❌ [API] {error_msg}")
         return response.json({"error": error_msg, "processes": {}}, status=500)
+
 
 @api_bp.route("/poll", methods=["GET"])
 async def poll_updates(request: Request) -> HTTPResponse:
@@ -121,7 +119,6 @@ async def poll_updates(request: Request) -> HTTPResponse:
                 processes = request.app.ctx.process_manager.get_all_processes()
                 status_updates = {name: proc.status for name, proc in processes.items()}
 
-
             # Format response to match frontend expectations
             response_data = {
                 "output_lines": new_lines,
@@ -137,6 +134,7 @@ async def poll_updates(request: Request) -> HTTPResponse:
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
+
 
 @api_bp.route("/process/<process_name>/start", methods=["POST"])
 async def start_process(request: Request, process_name: str) -> HTTPResponse:
@@ -169,6 +167,7 @@ async def start_process(request: Request, process_name: str) -> HTTPResponse:
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
 
+
 @api_bp.route("/process/<process_name>/stop", methods=["POST"])
 async def stop_process(request: Request, process_name: str) -> HTTPResponse:
     """Stop a specific process via direct overmind command"""
@@ -199,6 +198,7 @@ async def stop_process(request: Request, process_name: str) -> HTTPResponse:
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
+
 
 @api_bp.route("/process/<process_name>/restart", methods=["POST"])
 async def restart_process(request: Request, process_name: str) -> HTTPResponse:
@@ -231,6 +231,7 @@ async def restart_process(request: Request, process_name: str) -> HTTPResponse:
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
 
+
 @api_bp.route("/process/<process_name>/toggle", methods=["POST"])
 async def toggle_process_selection(request: Request, process_name: str) -> HTTPResponse:
     """Toggle process selection for output display"""
@@ -248,6 +249,7 @@ async def toggle_process_selection(request: Request, process_name: str) -> HTTPR
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
+
 
 @api_bp.route("/processes/select-all", methods=["POST"])
 async def select_all_processes(request: Request) -> HTTPResponse:
@@ -271,6 +273,7 @@ async def select_all_processes(request: Request) -> HTTPResponse:
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
 
+
 @api_bp.route("/processes/deselect-all", methods=["POST"])
 async def deselect_all_processes(request: Request) -> HTTPResponse:
     """Deselect all processes from output display"""
@@ -293,6 +296,7 @@ async def deselect_all_processes(request: Request) -> HTTPResponse:
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
 
+
 @api_bp.route("/output/clear", methods=["POST"])
 async def clear_output(request: Request) -> HTTPResponse:
     """Clear all output lines"""
@@ -311,6 +315,7 @@ async def clear_output(request: Request) -> HTTPResponse:
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
+
 
 @api_bp.route("/status", methods=["GET"])
 async def get_status(request: Request) -> HTTPResponse:
@@ -344,6 +349,7 @@ async def get_status(request: Request) -> HTTPResponse:
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
 
+
 @api_bp.route("/daemon/info", methods=["GET"])
 async def get_daemon_info(request: Request) -> HTTPResponse:
     """Get daemon connection info"""
@@ -373,6 +379,7 @@ async def get_daemon_info(request: Request) -> HTTPResponse:
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
 
+
 @api_bp.route("/daemon/discover", methods=["POST"])
 async def discover_daemons(request: Request) -> HTTPResponse:
     """Trigger daemon discovery and return found daemons"""
@@ -394,6 +401,7 @@ async def discover_daemons(request: Request) -> HTTPResponse:
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
+
 
 @api_bp.route("/daemon/reconnect", methods=["POST"])
 async def reconnect_daemon(request: Request) -> HTTPResponse:
@@ -432,6 +440,7 @@ async def reconnect_daemon(request: Request) -> HTTPResponse:
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
+
 
 @api_bp.route("/shutdown", methods=["POST"])
 async def shutdown_daemon(request: Request) -> HTTPResponse:
@@ -548,6 +557,7 @@ async def shutdown_daemon(request: Request) -> HTTPResponse:
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
 
+
 @api_bp.route("/restart", methods=["POST"])
 async def restart_server(request: Request) -> HTTPResponse:
     """Restart the GUI server process to pick up code changes"""
@@ -586,11 +596,14 @@ async def restart_server(request: Request) -> HTTPResponse:
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
 
+
 def setup_api_routes(app):
     """Setup API routes on the app"""
     app.blueprint(api_bp)
 
 # Import callback functions from main_daemon for daemon reconnection
+
+
 def handle_output_line(line: str, app_instance):
     """Handle new output line from daemon client - add to update queue"""
     # Parse process name from daemon client output
@@ -603,6 +616,7 @@ def handle_output_line(line: str, app_instance):
         # Fallback - add as 'system' output
         update_queue.add_output_line(line, 'system')
 
+
 def handle_status_update(status_updates: dict, app_instance):
     """Handle status updates from daemon client - add to update queue"""
     # Update process manager
@@ -611,6 +625,7 @@ def handle_status_update(status_updates: dict, app_instance):
 
     # Add to update queue
     update_queue.add_bulk_status_updates(status_updates)
+
 
 class TestApiRoutesDaemon(unittest.TestCase):
     """Test cases for daemon API routes"""

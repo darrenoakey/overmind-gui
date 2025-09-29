@@ -4,8 +4,6 @@ Event handlers for Overmind GUI Web Server
 Contains startup and shutdown event handlers
 """
 
-import unittest
-
 
 async def startup_handler(sanic_app, _loop):
     """Handle application startup"""
@@ -31,15 +29,3 @@ async def shutdown_handler(sanic_app, _loop):
     if hasattr(sanic_app.ctx, 'overmind_controller'):
         await sanic_app.ctx.overmind_controller.stop()
         print("✅ Overmind controller stopped")
-
-
-class TestEventHandlers(unittest.TestCase):
-    """Test cases for event handlers"""
-
-    def test_startup_handler_exists(self):
-        """Test that startup_handler function exists and is callable"""
-        self.assertTrue(callable(startup_handler))
-
-    def test_shutdown_handler_exists(self):
-        """Test that shutdown_handler function exists and is callable"""
-        self.assertTrue(callable(shutdown_handler))

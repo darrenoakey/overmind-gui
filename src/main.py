@@ -104,6 +104,8 @@ def get_and_increment_version():
 # -----------------------------------------------------------------------------
 # App setup
 # -----------------------------------------------------------------------------
+
+
 app = Sanic("OvermindGUIDaemon")
 app.config.DEBUG = False  # Disable debug spam
 app.config.AUTO_RELOAD = False
@@ -200,8 +202,6 @@ setup_api_routes(app)
 
 
 @app.route("/shutdown", methods=["POST"])
-
-
 async def shutdown_server(request):
     """Shutdown the Sanic server"""
     try:
@@ -408,7 +408,6 @@ async def daemon_management_task(app_instance, working_directory: str):
         # Start database polling loop and status monitoring
         print("🔄 Starting database polling loop...")
 
-
         while not app_instance.ctx.shutdown_initiated and app_instance.ctx.running:
             try:
                 # Check if daemon is still running - but DON'T restart it
@@ -436,8 +435,6 @@ async def daemon_management_task(app_instance, working_directory: str):
                     # Process lines for local tracking
                     for line in new_lines:
                         app_instance.ctx.process_manager.add_output_line(line['html'])
-
-
 
                 # Poll every 250ms for good responsiveness
                 await asyncio.sleep(0.25)
@@ -647,8 +644,6 @@ def on_window_closing():
 
 
 @app.before_server_start
-
-
 async def setup(app_instance, loop):
     """Set up the application before server starts"""
     app_instance.ctx.running = True
@@ -676,8 +671,6 @@ async def setup(app_instance, loop):
 
 
 @app.listener("after_server_start")
-
-
 async def auto_launch_macos_app(_app, _loop):
     await asyncio.sleep(0.2)  # tiny grace so routes are live
     # Try ~/Applications first, then /Applications as secondary location
@@ -693,8 +686,6 @@ async def auto_launch_macos_app(_app, _loop):
 
 
 @app.before_server_stop
-
-
 async def cleanup(app_instance, _loop):
     """Final cleanup - should be minimal since main cleanup happens in shutdown endpoint"""
     if app_instance.ctx.shutdown_complete:
@@ -983,6 +974,7 @@ class TestOvermindGuiDaemon(unittest.TestCase):
         """Test that callback functions exist and are callable"""
         self.assertTrue(callable(handle_output_line))
         self.assertTrue(callable(handle_status_update))
+
 
 if __name__ == "__main__":
     main()

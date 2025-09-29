@@ -106,7 +106,6 @@ class DatabaseManager:
         conn.commit()
         return cursor.lastrowid
 
-
     def get_output_lines(self, since_id: int = 0, limit: int = 1000,
                         process_filter: List[str] = None) -> List[Dict]:
         """Retrieve output lines since specified ID"""
@@ -133,7 +132,6 @@ class DatabaseManager:
             return [dict(row) for row in cursor.fetchall()]
         finally:
             cursor.close()
-
 
     def cleanup_old_data(self, max_lines: int = 100000, days_to_keep: int = 30):
         """Clean up old data to prevent database growth"""
@@ -236,7 +234,6 @@ class DaemonInstance:
         except Exception as e:
             logger.warning(f"Failed to remove PID file: {e}")
 
-
     def _trigger_shutdown(self):
         """Trigger daemon shutdown when overmind dies"""
         logger.info("🔄 Overmind died - initiating daemon shutdown")
@@ -308,7 +305,6 @@ class DaemonInstance:
         logger.info(f"Daemon instance {self.instance_id} stopped")
 
 
-
 class OvermindDaemon:
     """Main daemon class that manages overmind instances"""
 
@@ -359,7 +355,8 @@ def main():
     parser.add_argument('--api - port', '-p', type=int, help='API port (default: auto - detect)')
     parser.add_argument('--log - level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                        default='INFO', help='Log level')
-    parser.add_argument('--overmind - args', type=str, help='Additional arguments to pass to overmind (space - separated)')
+    parser.add_argument('--overmind - args', type=str,
+                       help='Additional arguments to pass to overmind (space - separated)')
 
     args, unknown_args = parser.parse_known_args()
 

@@ -223,7 +223,7 @@ class DaemonOvermindManager:
 
         # Cancel monitoring tasks
         all_tasks = [self._output_task, self._status_monitor_task,
-                      self._heartbeat_task, self._cleanup_task] + self._db_writer_tasks
+                     self._heartbeat_task, self._cleanup_task] + self._db_writer_tasks
         for task in all_tasks:
             if task and not task.done():
                 task.cancel()
@@ -538,7 +538,8 @@ class DaemonOvermindManager:
                     logger.debug(f"✅ Matched process against known list: "
                                 f"{process_name}")
                 else:
-                    logger.debug(f"❌ Process '{potential_process}' not found. Loaded: {list(self.processes.keys())}, Known: {known_processes}")
+                    logger.debug(f"❌ Process '{potential_process}' not found. "
+                                 f"Loaded: {list(self.processes.keys())}, Known: {known_processes}")
 
         # Convert ANSI codes to HTML and store only HTML version
         html_content = self._convert_ansi_to_html(line)
@@ -618,7 +619,8 @@ class DaemonOvermindManager:
                             # Remove oldest lines, keep newest MAX_LINES_PER_PROCESS
                             self.db.cleanup_old_output_lines(process_name,
                                                             MAX_LINES_PER_PROCESS)
-                            logger.info(f"🧹 Cleaned up {excess_lines} old lines for process '{process_name}' (kept {MAX_LINES_PER_PROCESS})")
+                            logger.info(f"🧹 Cleaned up {excess_lines} old lines for process "
+                                        f"'{process_name}' (kept {MAX_LINES_PER_PROCESS})")
                             cleaned_processes += 1
 
                     except Exception as e:
@@ -906,6 +908,6 @@ class DaemonOvermindManager:
 
     def is_overmind_running(self) -> bool:
         """Check if overmind process is running"""
-        return (self.is_running and
-                self.overmind_process is not None and
-                self.overmind_process.returncode is None)
+        return (self.is_running
+                and self.overmind_process is not None
+                and self.overmind_process.returncode is None)
