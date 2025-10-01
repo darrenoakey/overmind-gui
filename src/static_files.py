@@ -51,119 +51,98 @@ def setup_static_routes(app: Sanic):
             app_js_path = os.path.join(script_dir, "app.js")
             return await file(app_js_path, mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// app.js file not found",
-                       content_type="application/javascript", status=404)
+            return text("// app.js file not found", content_type="application/javascript", status=404)
 
     @app.route("/polling.js")
     async def polling_js(_request):
         """Serve polling JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "polling.js"),
-                             mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "polling.js"), mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// polling.js file not found",
-                       content_type="application/javascript", status=404)
+            return text("// polling.js file not found", content_type="application/javascript", status=404)
 
     @app.route("/ui.js")
     async def ui_js(_request):
         """Serve UI JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "ui.js"),
-                             mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "ui.js"), mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// ui.js file not found",
-                       content_type="application/javascript", status=404)
+            return text("// ui.js file not found", content_type="application/javascript", status=404)
 
     @app.route("/init.js")
     async def init_js(_request):
         """Serve initialization JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "init.js"),
-                             mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "init.js"), mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// init.js file not found",
-                       content_type="application/javascript", status=404)
+            return text("// init.js file not found", content_type="application/javascript", status=404)
 
     @app.route("/utils.js")
     async def utils_js(_request):
         """Serve utility JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "utils.js"),
-                             mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "utils.js"), mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// utils.js file not found",
-                       content_type="application/javascript", status=404)
+            return text("// utils.js file not found", content_type="application/javascript", status=404)
 
     @app.route("/search.js")
     async def search_js(_request):
         """Serve search JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "search.js"),
-                             mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "search.js"), mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// search.js file not found",
-                       content_type="application/javascript", status=404)
+            return text("// search.js file not found", content_type="application/javascript", status=404)
 
     @app.route("/websocket.js")
     async def websocket_js(_request):
         """Serve websocket JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "websocket.js"),
-                             mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "websocket.js"), mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// websocket.js file not found",
-                       content_type="application/javascript", status=404)
+            return text("// websocket.js file not found", content_type="application/javascript", status=404)
 
     @app.route("/components.js")
     async def components_js(_request):
         """Serve components JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "components.js"),
-                             mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "components.js"), mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// components.js file not found",
-                       content_type="application/javascript", status=404)
+            return text("// components.js file not found", content_type="application/javascript", status=404)
 
     # High - performance architecture files
     @app.route("/state-manager.js", name="state_manager_js")
     async def state_manager_js(_request):
         """Serve state manager JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "state-manager.js"),
-                             mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "state-manager.js"), mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// state - manager.js file not found",
-                       content_type="application/javascript", status=404)
+            return text("// state - manager.js file not found", content_type="application/javascript", status=404)
 
     @app.route("/virtual-list.js", name="virtual_list_js")
     async def virtual_list_js(_request):
         """Serve virtual list JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "virtual-list.js"),
-                             mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "virtual-list.js"), mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// virtual - list.js file not found",
-                       content_type="application/javascript", status=404)
+            return text("// virtual - list.js file not found", content_type="application/javascript", status=404)
 
     @app.route("/data-processor.worker.js", name="data_processor_worker_js")
     async def data_processor_worker_js(_request):
         """Serve data processor web worker file"""
         try:
-            return await file(os.path.join(script_dir, "data-processor.worker.js"),
-                             mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "data-processor.worker.js"), mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// data - processor.worker.js file not found",
-                       content_type="application/javascript", status=404)
+            return text(
+                "// data - processor.worker.js file not found", content_type="application/javascript", status=404
+            )
 
     @app.route("/constants.js", name="constants_js")
     async def constants_js(_request):
         """Serve constants JavaScript file"""
         try:
-            return await file(os.path.join(script_dir, "constants.js"),
-                             mime_type="application/javascript")
+            return await file(os.path.join(script_dir, "constants.js"), mime_type="application/javascript")
         except FileNotFoundError:
-            return text("// constants.js file not found",
-                       content_type="application/javascript", status=404)
+            return text("// constants.js file not found", content_type="application/javascript", status=404)
 
     @app.route("/favicon.ico")
     async def favicon(_request):
@@ -171,8 +150,7 @@ def setup_static_routes(app: Sanic):
         try:
             # Favicon should be in parent directory (root)
             root_dir = os.path.dirname(script_dir)
-            return await file(os.path.join(root_dir, "favicon.ico"),
-                             mime_type="image/x - icon")
+            return await file(os.path.join(root_dir, "favicon.ico"), mime_type="image/x - icon")
         except FileNotFoundError as exc:
             raise NotFound("Favicon not available") from exc
 
@@ -192,14 +170,25 @@ class TestStaticFiles(unittest.TestCase):
 
         # Check that routes were added
         route_names = [route.name for route in app.router.routes_all.values()]
-        expected_routes = ['index', 'styles', 'app_js', 'polling_js', 'ui_js', 'init_js',
-                          'utils_js', 'search_js', 'websocket_js', 'components_js', 'favicon']
+        expected_routes = [
+            "index",
+            "styles",
+            "app_js",
+            "polling_js",
+            "ui_js",
+            "init_js",
+            "utils_js",
+            "search_js",
+            "websocket_js",
+            "components_js",
+            "favicon",
+        ]
 
         for expected_route in expected_routes:
             # Check if any route contains the expected name
             self.assertTrue(
                 any(expected_route in route_name for route_name in route_names),
-                f"Route containing '{expected_route}' not found in {route_names}"
+                f"Route containing '{expected_route}' not found in {route_names}",
             )
 
     def test_script_directory_resolution(self):

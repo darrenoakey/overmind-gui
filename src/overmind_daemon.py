@@ -25,11 +25,8 @@ from typing import Dict, List, Optional
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('overmind - daemon.log')
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler("overmind - daemon.log")],
 )
 logger = logging.getLogger(__name__)
 
@@ -53,20 +50,20 @@ class DatabaseManager:
     def _initialize_database(self):
         """Create database schema if it doesn't exist"""
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS output_lines (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     process TEXT NOT NULL,
                     html TEXT NOT NULL
                 )
-            ''')
+            """)
 
             # Simplified schema - just output lines
 
             # Create indexes for performance - order matters for query optimization
-            conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_output_lines_id ON output_lines(id)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_output_lines_process_id ON output_lines(process, id)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_output_lines_id_process ON output_lines(id, process)')
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_output_lines_id ON output_lines(id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_output_lines_process_id ON output_lines(process, id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_output_lines_id_process ON output_lines(id, process)")
 
             conn.commit()
 
@@ -98,32 +95,34 @@ class DatabaseManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('''
+        cursor.execute(
+            """
             INSERT INTO output_lines (process, html)
             VALUES (?, ?)
-        ''', (process, html))
+        """,
+            (process, html),
+        )
 
         conn.commit()
         return cursor.lastrowid
 
-    def get_output_lines(self, since_id: int = 0, limit: int = 1000,
-                        process_filter: List[str] = None) -> List[Dict]:
+    def get_output_lines(self, since_id: int = 0, limit: int = 1000, process_filter: List[str] = None) -> List[Dict]:
         """Retrieve output lines since specified ID"""
         conn = self.get_connection()
 
-        query = '''
+        query = """
             SELECT id, process, html
             FROM output_lines
             WHERE id > ?
-        '''
+        """
         params = [since_id]
 
         if process_filter:
-            placeholders = ','.join('?' * len(process_filter))
-            query += f' AND process IN ({placeholders})'
+            placeholders = ",".join("?" * len(process_filter))
+            query += f" AND process IN ({placeholders})"
             params.extend(process_filter)
 
-        query += ' ORDER BY id ASC LIMIT ?'
+        query += " ORDER BY id ASC LIMIT ?"
         params.append(limit)
 
         cursor = conn.cursor()
@@ -139,16 +138,19 @@ class DatabaseManager:
         cutoff_timestamp = time.time() - (days_to_keep * 24 * 60 * 60)
 
         # Keep only the most recent max_lines
-        conn.execute('''
+        conn.execute(
+            """
             DELETE FROM output_lines
             WHERE id NOT IN (
                 SELECT id FROM output_lines
                 ORDER BY id DESC LIMIT ?
             )
-        ''', (max_lines,))
+        """,
+            (max_lines,),
+        )
 
         # Remove old events
-        conn.execute('DELETE FROM daemon_events WHERE timestamp < ?', (cutoff_timestamp,))
+        conn.execute("DELETE FROM daemon_events WHERE timestamp < ?", (cutoff_timestamp,))
 
         conn.commit()
         logger.info(f"Database cleanup completed - keeping {max_lines} lines and {days_to_keep} days of events")
@@ -156,10 +158,7 @@ class DatabaseManager:
     def count_output_lines_for_process(self, process_name: str) -> int:
         """Count output lines for a specific process"""
         conn = self.get_connection()
-        cursor = conn.execute(
-            'SELECT COUNT(*) FROM output_lines WHERE process_name = ?',
-            (process_name,)
-        )
+        cursor = conn.execute("SELECT COUNT(*) FROM output_lines WHERE process_name = ?", (process_name,))
         return cursor.fetchone()[0]
 
     def cleanup_old_output_lines(self, process_name: str, keep_lines: int):
@@ -167,7 +166,8 @@ class DatabaseManager:
         conn = self.get_connection()
 
         # Delete old lines, keeping only the most recent keep_lines
-        conn.execute('''
+        conn.execute(
+            """
             DELETE FROM output_lines
             WHERE process_name = ?
             AND id NOT IN (
@@ -176,7 +176,9 @@ class DatabaseManager:
                 ORDER BY id DESC
                 LIMIT ?
             )
-        ''', (process_name, process_name, keep_lines))
+        """,
+            (process_name, process_name, keep_lines),
+        )
 
         conn.commit()
         deleted_count = conn.total_changes
@@ -194,7 +196,7 @@ class DaemonInstance:
         self.status = "initializing"
 
         # Database setup - lives next to Procfile, clear on startup
-        db_path = os.path.join(self.working_directory, 'overmind.db')
+        db_path = os.path.join(self.working_directory, "overmind.db")
 
         # Remove existing database for fresh start
         if os.path.exists(db_path):
@@ -211,7 +213,7 @@ class DaemonInstance:
         self.overmind_manager = None
 
         # Write process ID file for backend discovery
-        self.pid_file = os.path.join(self.working_directory, 'overmind - daemon.pid')
+        self.pid_file = os.path.join(self.working_directory, "overmind - daemon.pid")
         self._write_pid_file()
 
         logger.info(f"Daemon instance created: {self.instance_id}")
@@ -221,7 +223,7 @@ class DaemonInstance:
 
     def _write_pid_file(self):
         """Write process ID file for backend discovery"""
-        with open(self.pid_file, 'w') as f:
+        with open(self.pid_file, "w") as f:
             f.write(str(self.pid))
         logger.info(f"Wrote daemon PID {self.pid} to {self.pid_file}")
 
@@ -256,7 +258,7 @@ class DaemonInstance:
                 database_manager=self.db,
                 working_directory=self.working_directory,
                 overmind_args=overmind_args or [],
-                on_overmind_death=self._trigger_shutdown
+                on_overmind_death=self._trigger_shutdown,
             )
 
             # Start overmind
@@ -314,6 +316,7 @@ class OvermindDaemon:
 
     def setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown"""
+
         def signal_handler(signum, frame):
             logger.info(f"Received signal {signum}, initiating shutdown...")
             self.shutdown_requested = True
@@ -350,13 +353,11 @@ def main():
     """Main entry point for the daemon"""
     import argparse
 
-    parser = argparse.ArgumentParser(description='Overmind Daemon - Independent overmind process manager')
-    parser.add_argument('--working-dir', '-d', type=str, help='Working directory (default: current directory)')
-    parser.add_argument('--api-port', '-p', type=int, help='API port (default: auto-detect)')
-    parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
-                       default='INFO', help='Log level')
-    parser.add_argument('--overmind-args', type=str,
-                       help='Additional arguments to pass to overmind (space-separated)')
+    parser = argparse.ArgumentParser(description="Overmind Daemon - Independent overmind process manager")
+    parser.add_argument("--working-dir", "-d", type=str, help="Working directory (default: current directory)")
+    parser.add_argument("--api-port", "-p", type=int, help="API port (default: auto-detect)")
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO", help="Log level")
+    parser.add_argument("--overmind-args", type=str, help="Additional arguments to pass to overmind (space-separated)")
 
     args, unknown_args = parser.parse_known_args()
 

@@ -28,18 +28,18 @@ class TestDaemonOvermindManagerUnit(unittest.TestCase):
 
             def initialize_database(self):
                 with sqlite3.connect(self.db_path) as conn:
-                    conn.execute('''
+                    conn.execute("""
                         CREATE TABLE IF NOT EXISTS output_lines (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                             process TEXT NOT NULL,
                             html TEXT NOT NULL
                         )
-                    ''')
+                    """)
                     conn.commit()
 
-        self.db_manager = TestDBManager(os.path.join(self.test_dir, 'test.db'))
+        self.db_manager = TestDBManager(os.path.join(self.test_dir, "test.db"))
         self.db_manager.initialize_database()
-        self.manager = DaemonOvermindManager('test-instance', self.db_manager, self.test_dir)
+        self.manager = DaemonOvermindManager("test-instance", self.db_manager, self.test_dir)
 
     def tearDown(self):
         """Clean up test environment"""
@@ -47,7 +47,7 @@ class TestDaemonOvermindManagerUnit(unittest.TestCase):
 
     def test_initialization(self):
         """Test daemon manager initialization"""
-        self.assertEqual(self.manager.daemon_instance_id, 'test-instance')
+        self.assertEqual(self.manager.daemon_instance_id, "test-instance")
         self.assertEqual(self.manager.working_directory, self.test_dir)
         self.assertFalse(self.manager.is_running)
         self.assertFalse(self.manager.is_stopping)
@@ -65,8 +65,8 @@ class TestDaemonOvermindManagerUnit(unittest.TestCase):
         process, html = self.manager._parse_line_for_storage(ansi_line)
         self.assertEqual(process, "test")
         # Should not contain raw ANSI sequences
-        self.assertNotIn('\x1b[32m', html)
-        self.assertNotIn('\x1b[0m', html)
+        self.assertNotIn("\x1b[32m", html)
+        self.assertNotIn("\x1b[0m", html)
 
     def test_extract_process_name(self):
         """Test process name extraction"""
@@ -84,7 +84,7 @@ class TestDaemonOvermindManagerUnit(unittest.TestCase):
 
     def test_output_file_path(self):
         """Test output file path configuration"""
-        expected_path = os.path.join(self.test_dir, 'overmind_output.log')
+        expected_path = os.path.join(self.test_dir, "overmind_output.log")
         self.assertEqual(self.manager.output_file, expected_path)
 
 
@@ -110,17 +110,18 @@ class TestDaemonOvermindManager(unittest.TestCase):
             # Create Procfile
             procfile_content = "bulk_test: ./bulk_output.sh\n"
             procfile_path = os.path.join(test_dir, "Procfile")
-            with open(procfile_path, 'w') as f:
+            with open(procfile_path, "w") as f:
                 f.write(procfile_content)
 
             # Start the overmind daemon in the test directory
             daemon_script = os.path.join(current_dir, "overmind_daemon.py")
 
-            daemon_process = subprocess.Popen([
-                sys.executable, daemon_script,
-                "--working-dir", test_dir,
-                "--log-level", "INFO"
-            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            daemon_process = subprocess.Popen(
+                [sys.executable, daemon_script, "--working-dir", test_dir, "--log-level", "INFO"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
 
             # Wait for daemon to start and process
             time.sleep(2)
@@ -172,14 +173,13 @@ class TestDaemonOvermindManager(unittest.TestCase):
                 line_count = len(lines)
 
                 # Should have exactly 20,000 data lines
-                self.assertGreaterEqual(line_count, 20000,
-                                      f"Expected >=20000 lines, got {line_count}")
+                self.assertGreaterEqual(line_count, 20000, f"Expected >=20000 lines, got {line_count}")
 
                 # Verify line sequence by extracting line numbers
                 seen_numbers = []
                 for line_id, process, html in lines:
                     # Extract line number from content like "BATCH1 Line #00001:" or "Line #00001:"
-                    match = re.search(r'Line #(\d+):', html)
+                    match = re.search(r"Line #(\d+):", html)
                     if match:
                         line_num = int(match.group(1))
                         seen_numbers.append(line_num)
@@ -191,8 +191,10 @@ class TestDaemonOvermindManager(unittest.TestCase):
                     missing_lines = expected_range - actual_set
 
                     if missing_lines:
-                        self.fail(f"Missing {len(missing_lines)} numbered lines. "
-                                f"First 10 missing: {sorted(list(missing_lines))[:10]}")
+                        self.fail(
+                            f"Missing {len(missing_lines)} numbered lines. "
+                            f"First 10 missing: {sorted(list(missing_lines))[:10]}"
+                        )
 
             finally:
                 conn.close()
@@ -220,18 +222,19 @@ class TestDaemonOvermindManager(unittest.TestCase):
 world_green: echo -e "\\033[32mworld\\033[0m"
 """
             procfile_path = os.path.join(test_dir, "Procfile")
-            with open(procfile_path, 'w') as f:
+            with open(procfile_path, "w") as f:
                 f.write(procfile_content)
 
             # Start the overmind daemon in the test directory
             current_dir = os.path.dirname(os.path.abspath(__file__))
             daemon_script = os.path.join(current_dir, "overmind_daemon.py")
 
-            daemon_process = subprocess.Popen([
-                sys.executable, daemon_script,
-                "--working-dir", test_dir,
-                "--log-level", "INFO"
-            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            daemon_process = subprocess.Popen(
+                [sys.executable, daemon_script, "--working-dir", test_dir, "--log-level", "INFO"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
 
             # Wait for daemon to start and process
             time.sleep(3)
@@ -283,13 +286,12 @@ world_green: echo -e "\\033[32mworld\\033[0m"
                 line_count = len(lines)
 
                 # Should have at least 2 lines (one from each process)
-                self.assertGreaterEqual(line_count, 2,
-                                      f"Expected >=2 lines, got {line_count}")
+                self.assertGreaterEqual(line_count, 2, f"Expected >=2 lines, got {line_count}")
 
                 # Verify we have both processes
                 processes_found = {line[1] for line in lines}
-                self.assertIn('hello_red', processes_found, "hello_red process output not found")
-                self.assertIn('world_green', processes_found, "world_green process output not found")
+                self.assertIn("hello_red", processes_found, "hello_red process output not found")
+                self.assertIn("world_green", processes_found, "world_green process output not found")
 
                 # Verify HTML contains proper color formatting
                 red_html_found = False
@@ -298,33 +300,33 @@ world_green: echo -e "\\033[32mworld\\033[0m"
                 for line_id, process, html in lines:
                     print(f"Process: {process}, HTML: {html}")
 
-                    if process == 'hello_red':
+                    if process == "hello_red":
                         # Should contain red color
-                        has_red_standard = 'color: #800000' in html or 'color: #ff0000' in html
-                        has_red_generic = ('color:' in html
-                                         and ('red' in html.lower() or '800000' in html or 'ff0000' in html))
+                        has_red_standard = "color: #800000" in html or "color: #ff0000" in html
+                        has_red_generic = "color:" in html and (
+                            "red" in html.lower() or "800000" in html or "ff0000" in html
+                        )
                         if has_red_standard or has_red_generic:
                             red_html_found = True
-                        self.assertIn('hello', html, f"'hello' text not found in red process HTML: {html}")
+                        self.assertIn("hello", html, f"'hello' text not found in red process HTML: {html}")
 
-                    elif process == 'world_green':
+                    elif process == "world_green":
                         # Should contain green color
-                        has_green_standard = 'color: #008000' in html or 'color: #00ff00' in html
-                        has_green_generic = ('color:' in html
-                                           and ('green' in html.lower() or '008000' in html or '00ff00' in html))
+                        has_green_standard = "color: #008000" in html or "color: #00ff00" in html
+                        has_green_generic = "color:" in html and (
+                            "green" in html.lower() or "008000" in html or "00ff00" in html
+                        )
                         if has_green_standard or has_green_generic:
                             green_html_found = True
-                        self.assertIn('world', html, f"'world' text not found in green process HTML: {html}")
+                        self.assertIn("world", html, f"'world' text not found in green process HTML: {html}")
 
                     # Verify no raw ANSI escape sequences made it into the database
-                    self.assertNotIn('\x1b[', html, f"Raw ANSI escape sequences found in HTML: {html}")
-                    self.assertNotIn('\\033[', html, f"Raw ANSI escape sequences found in HTML: {html}")
+                    self.assertNotIn("\x1b[", html, f"Raw ANSI escape sequences found in HTML: {html}")
+                    self.assertNotIn("\\033[", html, f"Raw ANSI escape sequences found in HTML: {html}")
 
                 # Verify both colors were found
-                self.assertTrue(red_html_found,
-                               "Red color formatting not found in hello_red process HTML")
-                self.assertTrue(green_html_found,
-                               "Green color formatting not found in world_green process HTML")
+                self.assertTrue(red_html_found, "Red color formatting not found in hello_red process HTML")
+                self.assertTrue(green_html_found, "Green color formatting not found in world_green process HTML")
 
             finally:
                 conn.close()
@@ -338,5 +340,5 @@ world_green: echo -e "\\033[32mworld\\033[0m"
                     pass  # Best effort cleanup
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

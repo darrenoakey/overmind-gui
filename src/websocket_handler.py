@@ -16,6 +16,7 @@ from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 @dataclass
 class ClientConnection:
     """Represents a permanent client connection"""
+
     ws: Websocket
     connected_at: float = field(default_factory=time.time)
     last_activity: float = field(default_factory=time.time)
@@ -27,7 +28,7 @@ class ClientConnection:
         try:
             # Check WebSocket state attribute if available
             # State 1 = OPEN, State 2 = CLOSING, State 3 = CLOSED
-            state = getattr(self.ws, 'state', None)
+            state = getattr(self.ws, "state", None)
             if state is not None:
                 return state == 1
             # If no state attribute, assume alive
@@ -58,7 +59,7 @@ class WebSocketManager:
     This manager lives for the entire application lifecycle.
     """
 
-    _instance: Optional['WebSocketManager'] = None
+    _instance: Optional["WebSocketManager"] = None
     _initialized: bool = False
 
     def __new__(cls):
@@ -90,8 +91,7 @@ class WebSocketManager:
             if ws in self.connections:
                 conn = self.connections[ws]
                 del self.connections[ws]
-                print(f"CONNECTION {conn.id} LOST - THIS IS A BUG! "
-                      f"Total connections: {len(self.connections)}")
+                print(f"CONNECTION {conn.id} LOST - THIS IS A BUG! Total connections: {len(self.connections)}")
                 print("WebSocket disconnections should not happen in single - worker mode")
 
     async def send_to_client(self, ws: Websocket, message_type: str, data: Any) -> bool:
@@ -201,13 +201,13 @@ class WebSocketManager:
     async def send_initial_state(self, ws: Websocket, app):
         """Send initial state to client"""
         print("[WS] Preparing to send initial state")
-        if hasattr(app.ctx, 'process_manager'):
+        if hasattr(app.ctx, "process_manager"):
             process_manager = app.ctx.process_manager
             try:
                 state_data = {
                     "processes": process_manager.to_dict(),
                     "output": process_manager.get_combined_output(),
-                    "stats": process_manager.get_stats()
+                    "stats": process_manager.get_stats(),
                 }
                 print(f"[WS] Sending initial state with {len(state_data['processes'])} processes")
                 success = await self.send_to_client(ws, "initial_state", state_data)
@@ -224,12 +224,9 @@ class WebSocketManager:
     async def _handle_toggle_process(self, payload: Dict[str, Any], app):
         """Handle toggle process selection"""
         process_name = payload.get("process_name")
-        if process_name and hasattr(app.ctx, 'process_manager'):
+        if process_name and hasattr(app.ctx, "process_manager"):
             selected = app.ctx.process_manager.toggle_process_selection(process_name)
-            await self.broadcast("process_toggled", {
-                "process_name": process_name,
-                "selected": selected
-            })
+            await self.broadcast("process_toggled", {"process_name": process_name, "selected": selected})
 
     async def _handle_process_action(self, ws: Websocket, payload: Dict[str, Any], app):
         """Handle process control actions"""
@@ -239,10 +236,8 @@ class WebSocketManager:
         if not action or not process_name:
             return
 
-        if not hasattr(app.ctx, 'overmind_controller'):
-            await self.send_to_client(ws, "error", {
-                "message": "Overmind controller not available"
-            })
+        if not hasattr(app.ctx, "overmind_controller"):
+            await self.send_to_client(ws, "error", {"message": "Overmind controller not available"})
             return
 
         controller = app.ctx.overmind_controller
@@ -256,14 +251,12 @@ class WebSocketManager:
             elif action == "restart":
                 success = await controller.restart_process(process_name)
 
-            await self.send_to_client(ws, "action_result", {
-                "action": action,
-                "process_name": process_name,
-                "success": success
-            })
+            await self.send_to_client(
+                ws, "action_result", {"action": action, "process_name": process_name, "success": success}
+            )
 
             # Force status update after action
-            if hasattr(app.ctx, 'overmind_controller'):
+            if hasattr(app.ctx, "overmind_controller"):
                 try:
                     status_output = await controller.get_status()
                     if status_output:
@@ -274,27 +267,22 @@ class WebSocketManager:
 
         except Exception as e:  # pylint: disable=broad - except
             print(f"Error performing action {action} on {process_name}: {e}")
-            await self.send_to_client(ws, "error", {
-                "message": f"Action failed: {str(e)}"
-            })
+            await self.send_to_client(ws, "error", {"message": f"Action failed: {str(e)}"})
 
     async def _handle_clear_output(self, app):
         """Handle clear output request"""
-        if hasattr(app.ctx, 'process_manager'):
+        if hasattr(app.ctx, "process_manager"):
             app.ctx.process_manager.clear_all_output()
             await self.broadcast("output_cleared", {})
 
     async def _handle_status_update(self, status_updates: dict, app):
         """Handle status updates"""
-        if hasattr(app.ctx, 'process_manager'):
+        if hasattr(app.ctx, "process_manager"):
             process_manager = app.ctx.process_manager
             for process_name, status in status_updates.items():
                 process_manager.update_process_status(process_name, status)
 
-            await self.broadcast("status_update", {
-                "updates": status_updates,
-                "stats": process_manager.get_stats()
-            })
+            await self.broadcast("status_update", {"updates": status_updates, "stats": process_manager.get_stats()})
 
     async def monitor_connections(self):
         """Monitor connections and send periodic heartbeats"""
@@ -342,10 +330,9 @@ async def websocket_handler(request, ws: Websocket):
 
     try:
         # Send initial connection success message
-        await websocket_manager.send_to_client(ws, "connected", {
-            "message": "WebSocket connected successfully",
-            "connection_id": conn.id
-        })
+        await websocket_manager.send_to_client(
+            ws, "connected", {"message": "WebSocket connected successfully", "connection_id": conn.id}
+        )
 
         # Handle messages forever - this loop should never exit normally
         print(f"[WS] Starting message handler for connection {conn.id} from {request.ip}")
@@ -377,9 +364,7 @@ async def websocket_handler(request, ws: Websocket):
 async def start_websocket_monitor(_app):
     """Start the WebSocket connection monitor as a background task"""
     if websocket_manager.monitor_task is None:
-        websocket_manager.monitor_task = asyncio.create_task(
-            websocket_manager.monitor_connections()
-        )
+        websocket_manager.monitor_task = asyncio.create_task(websocket_manager.monitor_connections())
         print("WebSocket monitor task started")
     else:
         print("WebSocket monitor already running")

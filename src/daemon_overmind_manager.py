@@ -10,14 +10,21 @@ from ansi_to_html import AnsiToHtml
 
 # Configure logging
 import logging
+
 logger = logging.getLogger(__name__)
 
 
 class DaemonOvermindManager:
     """Simplified overmind manager with direct file tailing and synchronous processing"""
 
-    def __init__(self, daemon_instance_id: str, database_manager, working_directory: str = None,
-                 overmind_args: List[str] = None, on_overmind_death=None):
+    def __init__(
+        self,
+        daemon_instance_id: str,
+        database_manager,
+        working_directory: str = None,
+        overmind_args: List[str] = None,
+        on_overmind_death=None,
+    ):
         self.daemon_instance_id = daemon_instance_id
         self.db = database_manager
         self.working_directory = working_directory or os.getcwd()
@@ -30,7 +37,7 @@ class DaemonOvermindManager:
         self.is_stopping = False
 
         # File-based output capture
-        self.output_file = os.path.join(self.working_directory, 'overmind_output.log')
+        self.output_file = os.path.join(self.working_directory, "overmind_output.log")
 
         # Simple monitoring
         self._output_task = None
@@ -49,7 +56,7 @@ class DaemonOvermindManager:
         logger.info("Starting overmind process...")
 
         # Check for existing overmind socket
-        if os.path.exists(os.path.join(self.working_directory, '.overmind.sock')):
+        if os.path.exists(os.path.join(self.working_directory, ".overmind.sock")):
             logger.error("Another overmind instance is already running in this directory")
             return False
 
@@ -67,12 +74,8 @@ class DaemonOvermindManager:
             env = self.get_colored_env()
 
             # Start overmind process with output redirected to file
-            cmd_str = ' '.join(cmd) + f' > "{self.output_file}" 2>&1'
-            self.overmind_process = await asyncio.create_subprocess_shell(
-                cmd_str,
-                cwd=self.working_directory,
-                env=env
-            )
+            cmd_str = " ".join(cmd) + f' > "{self.output_file}" 2>&1'
+            self.overmind_process = await asyncio.create_subprocess_shell(cmd_str, cwd=self.working_directory, env=env)
 
             self.is_running = True
             logger.info(f"Overmind process started with PID: {self.overmind_process.pid}")
@@ -83,22 +86,27 @@ class DaemonOvermindManager:
             # Check if process is still running
             if self.overmind_process.returncode is not None:
                 if self.overmind_process.returncode == 0:
-                    logger.info(f"Overmind process completed successfully with code: "
-                                f"{self.overmind_process.returncode}")
+                    logger.info(
+                        f"Overmind process completed successfully with code: {self.overmind_process.returncode}"
+                    )
                 else:
                     # Read error from output file
                     try:
                         if os.path.exists(self.output_file):
-                            with open(self.output_file, 'r') as f:
+                            with open(self.output_file, "r") as f:
                                 error_text = f.read()
                             logger.error(f"Overmind process failed with code: {self.overmind_process.returncode}")
                             logger.error(f"Overmind output: {error_text[-1000:]}")  # Last 1000 chars
                         else:
-                            logger.error(f"Overmind process failed with code: {self.overmind_process.returncode} "
-                                         f"(no output file)")
+                            logger.error(
+                                f"Overmind process failed with code: {self.overmind_process.returncode} "
+                                f"(no output file)"
+                            )
                     except Exception as e:
-                        logger.error(f"Overmind process failed with code: {self.overmind_process.returncode} "
-                                     f"(could not read output: {e})")
+                        logger.error(
+                            f"Overmind process failed with code: {self.overmind_process.returncode} "
+                            f"(could not read output: {e})"
+                        )
 
                     self.is_running = False
                     return False
@@ -125,18 +133,15 @@ class DaemonOvermindManager:
             return
 
         try:
-            with open(procfile_path, 'r') as f:
+            with open(procfile_path, "r") as f:
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
-                    if line and ':' in line and not line.startswith('#'):
+                    if line and ":" in line and not line.startswith("#"):
                         try:
-                            name, command = line.split(':', 1)
+                            name, command = line.split(":", 1)
                             name = name.strip()
                             command = command.strip()
-                            self.processes[name] = {
-                                'command': command,
-                                'status': 'unknown'
-                            }
+                            self.processes[name] = {"command": command, "status": "unknown"}
                         except ValueError:
                             logger.warning(f"Invalid Procfile line {line_num}: {line}")
 
@@ -152,33 +157,33 @@ class DaemonOvermindManager:
         # Track lines per process
         process_line_counts = {}
         total_lines = 0
-        file_position = 0
         partial_line = ""  # Store incomplete line from previous read
 
         # Batch processing for database efficiency
         pending_lines = []
-        batch_size = 1000
+
+        # Keep file handle open for the entire monitoring session
+        file_handle = None
 
         try:
             while self.is_running:
                 try:
-                    # Wait for output file to exist
-                    if not os.path.exists(self.output_file):
-                        await asyncio.sleep(0.1)
-                        continue
+                    # Wait for output file to exist and open it once
+                    if file_handle is None:
+                        if not os.path.exists(self.output_file):
+                            await asyncio.sleep(0.1)
+                            continue
+                        file_handle = open(self.output_file, "r", encoding="utf-8", errors="replace")
 
-                    # Read new content from file
-                    with open(self.output_file, 'r', encoding='utf-8', errors='replace') as f:
-                        f.seek(file_position)
-                        new_content = f.read()
-                        file_position = f.tell()
+                    # Read new content from file (file handle stays open)
+                    new_content = file_handle.read()
 
                     if new_content:
                         # Combine with any partial line from last read
                         full_content = partial_line + new_content
 
                         # Split into lines
-                        lines = full_content.split('\n')
+                        lines = full_content.split("\n")
 
                         # Save the last part (might be incomplete line)
                         partial_line = lines[-1]
@@ -194,14 +199,14 @@ class DaemonOvermindManager:
                                 # Add line to pending batch
                                 pending_lines.append(line)
 
-                                # Write batch if we've reached batch size
-                                if len(pending_lines) >= batch_size:
-                                    try:
-                                        self._write_batch_to_database(pending_lines)
-                                        pending_lines = []
-                                    except Exception as e:
-                                        logger.error(f"Error writing batch to database: {e}")
-                                        pending_lines = []  # Clear to prevent memory buildup
+                        # Write immediately when caught up (no more data available)
+                        if pending_lines:
+                            try:
+                                self._write_batch_to_database(pending_lines)
+                                pending_lines = []
+                            except Exception as e:
+                                logger.error(f"Error writing batch to database: {e}")
+                                pending_lines = []  # Clear to prevent memory buildup
 
                     # Check if overmind process has finished
                     if self.overmind_process.returncode is not None:
@@ -249,11 +254,20 @@ class DaemonOvermindManager:
         except Exception as e:
             logger.error(f"Error in output monitoring: {e}", exc_info=True)
         finally:
+            # Close file handle if open
+            if file_handle is not None:
+                try:
+                    file_handle.close()
+                except Exception:
+                    pass
+
             logger.info("Output monitoring stopped")
 
             # Log final statistics
-            logger.info(f"📊 Output monitoring final stats: {total_lines} total lines "
-                        f"across {len(process_line_counts)} processes")
+            logger.info(
+                f"📊 Output monitoring final stats: {total_lines} total lines "
+                f"across {len(process_line_counts)} processes"
+            )
             for proc, count in process_line_counts.items():
                 if count > 1000:  # Only log processes with significant output
                     logger.info(f"  📈 {proc}: {count} lines")
@@ -277,10 +291,7 @@ class DaemonOvermindManager:
                 batch_data.append((process_name, html_content))
 
             # Bulk insert all lines at once
-            cursor.executemany(
-                "INSERT INTO output_lines (process, html) VALUES (?, ?)",
-                batch_data
-            )
+            cursor.executemany("INSERT INTO output_lines (process, html) VALUES (?, ?)", batch_data)
 
             # Commit transaction
             conn.commit()
@@ -289,7 +300,7 @@ class DaemonOvermindManager:
         except Exception as e:
             logger.error(f"Error writing batch to database: {e}")
             try:
-                if 'conn' in locals():
+                if "conn" in locals():
                     conn.rollback()
             except Exception:
                 pass
@@ -309,11 +320,12 @@ class DaemonOvermindManager:
 
                 # Remove ANSI color codes from process name
                 import re
-                ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-                potential_process = ansi_escape.sub('', process_part).strip()
+
+                ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+                potential_process = ansi_escape.sub("", process_part).strip()
 
                 # Known processes
-                known_processes = ['temporal', 'backend', 'web', 'worker', 'helper', 'storybook', 'bulk_test']
+                known_processes = ["temporal", "backend", "web", "worker", "helper", "storybook", "bulk_test"]
 
                 if potential_process in known_processes or potential_process in self.processes:
                     process_name = potential_process
@@ -324,14 +336,15 @@ class DaemonOvermindManager:
 
     def _extract_process_name(self, line: str) -> str:
         """Extract process name from overmind output line for stats tracking"""
-        if ' | ' in line:
-            parts = line.split(' | ', 1)
+        if " | " in line:
+            parts = line.split(" | ", 1)
             if len(parts) >= 2:
                 process_part = parts[0].strip()
                 # Remove ANSI color codes
                 import re
-                ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-                clean_process = ansi_escape.sub('', process_part)
+
+                ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+                clean_process = ansi_escape.sub("", process_part)
                 return clean_process if clean_process else "system"
         return "system"
 
@@ -340,9 +353,9 @@ class DaemonOvermindManager:
         env = os.environ.copy()
 
         # Force color output for various tools
-        env['FORCE_COLOR'] = '1'
-        env['CLICOLOR_FORCE'] = '1'
-        env['TERM'] = 'xterm-256color'
+        env["FORCE_COLOR"] = "1"
+        env["CLICOLOR_FORCE"] = "1"
+        env["TERM"] = "xterm-256color"
 
         return env
 
@@ -359,9 +372,9 @@ class DaemonOvermindManager:
         if self.overmind_process and self.overmind_process.returncode is None:
             try:
                 # Try graceful shutdown first
-                quit_result = subprocess.run(['overmind', 'quit'],
-                                           cwd=self.working_directory,
-                                           capture_output=True, text=True, timeout=5)
+                quit_result = subprocess.run(
+                    ["overmind", "quit"], cwd=self.working_directory, capture_output=True, text=True, timeout=5
+                )
                 if quit_result.returncode == 0:
                     logger.info("✅ 'overmind quit' successful")
                 else:

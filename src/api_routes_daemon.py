@@ -26,41 +26,41 @@ async def get_current_state(request: Request) -> HTTPResponse:
         state = update_queue.get_current_state()
 
         # Get processes from process manager (local state)
-        if hasattr(request.app.ctx, 'process_manager'):
+        if hasattr(request.app.ctx, "process_manager"):
             processes = request.app.ctx.process_manager.get_all_processes()
-            state['processes'] = {name: proc.to_dict() for name, proc in processes.items()}
+            state["processes"] = {name: proc.to_dict() for name, proc in processes.items()}
 
             # Calculate stats from processes
             stats = request.app.ctx.process_manager.get_stats()
-            state['stats'] = stats
+            state["stats"] = stats
         else:
-            state['stats'] = {}
-            state['processes'] = {}
+            state["stats"] = {}
+            state["processes"] = {}
 
         # Add daemon status instead of overmind status
         daemon_status = "unknown"
-        if hasattr(request.app.ctx, 'daemon_manager') and request.app.ctx.daemon_manager:
+        if hasattr(request.app.ctx, "daemon_manager") and request.app.ctx.daemon_manager:
             if request.app.ctx.daemon_manager.is_daemon_running():
                 daemon_status = "running"
             else:
                 daemon_status = "stopped"
 
-        state['overmind_status'] = daemon_status  # Keep same key for UI compatibility
-        state['daemon_status'] = daemon_status   # Also provide daemon-specific key
-        state['version'] = getattr(request.app.ctx, 'version', 1)
+        state["overmind_status"] = daemon_status  # Keep same key for UI compatibility
+        state["daemon_status"] = daemon_status  # Also provide daemon-specific key
+        state["version"] = getattr(request.app.ctx, "version", 1)
 
         # Add database stats if available
-        if hasattr(request.app.ctx, 'database_client') and request.app.ctx.database_client:
+        if hasattr(request.app.ctx, "database_client") and request.app.ctx.database_client:
             try:
                 process_stats = request.app.ctx.database_client.get_process_stats()
-                state['queue_stats'] = {
-                    'total_processes': len(process_stats),
-                    'total_lines': sum(stats['line_count'] for stats in process_stats.values()),
-                    'processes': process_stats
+                state["queue_stats"] = {
+                    "total_processes": len(process_stats),
+                    "total_lines": sum(stats["line_count"] for stats in process_stats.values()),
+                    "processes": process_stats,
                 }
             except Exception as e:
                 print(f"Error getting database stats: {e}")
-                state['queue_stats'] = {}
+                state["queue_stats"] = {}
 
         return response.json(state)
 
@@ -72,7 +72,7 @@ async def get_current_state(request: Request) -> HTTPResponse:
 async def get_processes(request: Request) -> HTTPResponse:
     """Get processes from process manager"""
     try:
-        if hasattr(request.app.ctx, 'process_manager'):
+        if hasattr(request.app.ctx, "process_manager"):
             processes = request.app.ctx.process_manager.get_all_processes()
             process_data = {name: proc.to_dict() for name, proc in processes.items()}
             return response.json({"processes": process_data}, status=200)
@@ -89,7 +89,7 @@ async def poll_updates(request: Request) -> HTTPResponse:
     """Poll for updates since last message ID - proxy to daemon"""
     try:
         # Get last message ID from query parameter
-        last_id_str = request.args.get('last_message_id', '0')
+        last_id_str = request.args.get("last_message_id", "0")
 
         try:
             last_message_id = int(last_id_str)
@@ -102,7 +102,7 @@ async def poll_updates(request: Request) -> HTTPResponse:
         # Use direct database polling (new architecture)
         try:
             # Get database client
-            if not hasattr(request.app.ctx, 'database_client') or not request.app.ctx.database_client:
+            if not hasattr(request.app.ctx, "database_client") or not request.app.ctx.database_client:
                 return response.json({"error": "Database client not available"}, status=503)
 
             db_client = request.app.ctx.database_client
@@ -113,7 +113,7 @@ async def poll_updates(request: Request) -> HTTPResponse:
             # Get process stats and status updates
             stats = {}
             status_updates = {}
-            if hasattr(request.app.ctx, 'process_manager'):
+            if hasattr(request.app.ctx, "process_manager"):
                 stats = request.app.ctx.process_manager.get_stats()
                 # Get all processes for status updates
                 processes = request.app.ctx.process_manager.get_all_processes()
@@ -124,7 +124,7 @@ async def poll_updates(request: Request) -> HTTPResponse:
                 "output_lines": new_lines,
                 "stats": stats,
                 "status_updates": status_updates,
-                "last_id": max([line['id'] for line in new_lines]) if new_lines else last_message_id
+                "last_id": max([line["id"] for line in new_lines]) if new_lines else last_message_id,
             }
 
             return response.json(response_data)
@@ -143,14 +143,16 @@ async def start_process(request: Request, process_name: str) -> HTTPResponse:
         import asyncio
         import os
 
-        working_dir = getattr(request.app.ctx, 'working_directory', os.getcwd())
+        working_dir = getattr(request.app.ctx, "working_directory", os.getcwd())
 
         # Use direct overmind command to start process
         process = await asyncio.create_subprocess_exec(
-            "overmind", "start", process_name,
+            "overmind",
+            "start",
+            process_name,
             cwd=working_dir,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
         )
         await process.wait()
 
@@ -158,7 +160,7 @@ async def start_process(request: Request, process_name: str) -> HTTPResponse:
 
         if success:
             # Update process status in local manager
-            if hasattr(request.app.ctx, 'process_manager'):
+            if hasattr(request.app.ctx, "process_manager"):
                 request.app.ctx.process_manager.update_process_status(process_name, "running")
             return response.json({"success": True, "message": f"Started {process_name}"})
         else:
@@ -175,14 +177,16 @@ async def stop_process(request: Request, process_name: str) -> HTTPResponse:
         import asyncio
         import os
 
-        working_dir = getattr(request.app.ctx, 'working_directory', os.getcwd())
+        working_dir = getattr(request.app.ctx, "working_directory", os.getcwd())
 
         # Use direct overmind command to stop process
         process = await asyncio.create_subprocess_exec(
-            "overmind", "stop", process_name,
+            "overmind",
+            "stop",
+            process_name,
             cwd=working_dir,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
         )
         await process.wait()
 
@@ -190,7 +194,7 @@ async def stop_process(request: Request, process_name: str) -> HTTPResponse:
 
         if success:
             # Update process status in local manager
-            if hasattr(request.app.ctx, 'process_manager'):
+            if hasattr(request.app.ctx, "process_manager"):
                 request.app.ctx.process_manager.update_process_status(process_name, "stopped")
             return response.json({"success": True, "message": f"Stopped {process_name}"})
         else:
@@ -207,14 +211,16 @@ async def restart_process(request: Request, process_name: str) -> HTTPResponse:
         import asyncio
         import os
 
-        working_dir = getattr(request.app.ctx, 'working_directory', os.getcwd())
+        working_dir = getattr(request.app.ctx, "working_directory", os.getcwd())
 
         # Use direct overmind command to restart process
         process = await asyncio.create_subprocess_exec(
-            "overmind", "restart", process_name,
+            "overmind",
+            "restart",
+            process_name,
             cwd=working_dir,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
         )
         await process.wait()
 
@@ -222,7 +228,7 @@ async def restart_process(request: Request, process_name: str) -> HTTPResponse:
 
         if success:
             # Mark process as restarted in process manager
-            if hasattr(request.app.ctx, 'process_manager'):
+            if hasattr(request.app.ctx, "process_manager"):
                 request.app.ctx.process_manager.restart_process(process_name)
             return response.json({"success": True, "message": f"Restarted {process_name}"})
         else:
@@ -236,16 +242,12 @@ async def restart_process(request: Request, process_name: str) -> HTTPResponse:
 async def toggle_process_selection(request: Request, process_name: str) -> HTTPResponse:
     """Toggle process selection for output display"""
     try:
-        if not hasattr(request.app.ctx, 'process_manager'):
+        if not hasattr(request.app.ctx, "process_manager"):
             return response.json({"error": "Process manager not available"}, status=503)
 
         new_state = request.app.ctx.process_manager.toggle_process_selection(process_name)
 
-        return response.json({
-            "success": True,
-            "process": process_name,
-            "selected": new_state
-        })
+        return response.json({"success": True, "process": process_name, "selected": new_state})
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
@@ -255,7 +257,7 @@ async def toggle_process_selection(request: Request, process_name: str) -> HTTPR
 async def select_all_processes(request: Request) -> HTTPResponse:
     """Select all processes for output display"""
     try:
-        if not hasattr(request.app.ctx, 'process_manager'):
+        if not hasattr(request.app.ctx, "process_manager"):
             return response.json({"error": "Process manager not available"}, status=503)
 
         request.app.ctx.process_manager.select_all_processes()
@@ -264,11 +266,7 @@ async def select_all_processes(request: Request) -> HTTPResponse:
         processes = request.app.ctx.process_manager.get_all_processes()
         process_data = {name: proc.to_dict() for name, proc in processes.items()}
 
-        return response.json({
-            "success": True,
-            "message": "All processes selected",
-            "processes": process_data
-        })
+        return response.json({"success": True, "message": "All processes selected", "processes": process_data})
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
@@ -278,7 +276,7 @@ async def select_all_processes(request: Request) -> HTTPResponse:
 async def deselect_all_processes(request: Request) -> HTTPResponse:
     """Deselect all processes from output display"""
     try:
-        if not hasattr(request.app.ctx, 'process_manager'):
+        if not hasattr(request.app.ctx, "process_manager"):
             return response.json({"error": "Process manager not available"}, status=503)
 
         request.app.ctx.process_manager.deselect_all_processes()
@@ -287,11 +285,7 @@ async def deselect_all_processes(request: Request) -> HTTPResponse:
         processes = request.app.ctx.process_manager.get_all_processes()
         process_data = {name: proc.to_dict() for name, proc in processes.items()}
 
-        return response.json({
-            "success": True,
-            "message": "All processes deselected",
-            "processes": process_data
-        })
+        return response.json({"success": True, "message": "All processes deselected", "processes": process_data})
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
@@ -304,14 +298,12 @@ async def clear_output(request: Request) -> HTTPResponse:
         update_queue.clear_all()
 
         # Also clear process manager output if available
-        if hasattr(request.app.ctx, 'process_manager'):
+        if hasattr(request.app.ctx, "process_manager"):
             request.app.ctx.process_manager.clear_all_output()
 
-        return response.json({
-            "success": True,
-            "message": "Output cleared",
-            "latest_message_id": update_queue.message_counter
-        })
+        return response.json(
+            {"success": True, "message": "Output cleared", "latest_message_id": update_queue.message_counter}
+        )
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
@@ -327,15 +319,15 @@ async def get_status(request: Request) -> HTTPResponse:
             "process_count": 0,
             "line_count": 0,
             "uptime": 0,
-            "latest_message_id": update_queue.message_counter
+            "latest_message_id": update_queue.message_counter,
         }
 
-        if hasattr(request.app.ctx, 'daemon_client') and request.app.ctx.daemon_client:
+        if hasattr(request.app.ctx, "daemon_client") and request.app.ctx.daemon_client:
             daemon_running = request.app.ctx.daemon_client.is_running()
             status_info["daemon_running"] = daemon_running
             status_info["overmind_running"] = daemon_running  # For UI compatibility
 
-        if hasattr(request.app.ctx, 'process_manager'):
+        if hasattr(request.app.ctx, "process_manager"):
             stats = request.app.ctx.process_manager.get_stats()
             status_info["process_count"] = stats.get("total", 0)
 
@@ -359,18 +351,20 @@ async def get_daemon_info(request: Request) -> HTTPResponse:
             "daemon_id": None,
             "host": None,
             "port": None,
-            "connection_status": "disconnected"
+            "connection_status": "disconnected",
         }
 
-        if hasattr(request.app.ctx, 'daemon_client') and request.app.ctx.daemon_client:
-            daemon_info.update({
-                "connected": request.app.ctx.daemon_client.is_running(),
-                "host": request.app.ctx.daemon_client.daemon_host,
-                "port": request.app.ctx.daemon_client.daemon_port,
-                "connection_status": "connected" if request.app.ctx.daemon_client.is_running() else "disconnected"
-            })
+        if hasattr(request.app.ctx, "daemon_client") and request.app.ctx.daemon_client:
+            daemon_info.update(
+                {
+                    "connected": request.app.ctx.daemon_client.is_running(),
+                    "host": request.app.ctx.daemon_client.daemon_host,
+                    "port": request.app.ctx.daemon_client.daemon_port,
+                    "connection_status": "connected" if request.app.ctx.daemon_client.is_running() else "disconnected",
+                }
+            )
 
-        if hasattr(request.app.ctx, 'daemon_discovery') and request.app.ctx.daemon_discovery:
+        if hasattr(request.app.ctx, "daemon_discovery") and request.app.ctx.daemon_discovery:
             connection_status = request.app.ctx.daemon_discovery.get_connection_status()
             daemon_info["all_connections"] = connection_status
 
@@ -384,20 +378,16 @@ async def get_daemon_info(request: Request) -> HTTPResponse:
 async def discover_daemons(request: Request) -> HTTPResponse:
     """Trigger daemon discovery and return found daemons"""
     try:
-        if not hasattr(request.app.ctx, 'daemon_discovery') or not request.app.ctx.daemon_discovery:
+        if not hasattr(request.app.ctx, "daemon_discovery") or not request.app.ctx.daemon_discovery:
             return response.json({"error": "Daemon discovery not available"}, status=503)
 
         # Get port range from request body if provided
         request_data = request.json or {}
-        port_range = request_data.get('port_range', (9000, 9100))
+        port_range = request_data.get("port_range", (9000, 9100))
 
         discovered = await request.app.ctx.daemon_discovery.discover_daemons(port_range)
 
-        return response.json({
-            "success": True,
-            "discovered_count": len(discovered),
-            "daemons": discovered
-        })
+        return response.json({"success": True, "discovered_count": len(discovered), "daemons": discovered})
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
@@ -407,11 +397,11 @@ async def discover_daemons(request: Request) -> HTTPResponse:
 async def reconnect_daemon(request: Request) -> HTTPResponse:
     """Reconnect to best available daemon"""
     try:
-        if not hasattr(request.app.ctx, 'daemon_discovery') or not request.app.ctx.daemon_discovery:
+        if not hasattr(request.app.ctx, "daemon_discovery") or not request.app.ctx.daemon_discovery:
             return response.json({"error": "Daemon discovery not available"}, status=503)
 
         # Stop current client if any
-        if hasattr(request.app.ctx, 'daemon_client') and request.app.ctx.daemon_client:
+        if hasattr(request.app.ctx, "daemon_client") and request.app.ctx.daemon_client:
             await request.app.ctx.daemon_client.stop()
 
         # Find and connect to best daemon
@@ -423,7 +413,7 @@ async def reconnect_daemon(request: Request) -> HTTPResponse:
         new_client = await request.app.ctx.daemon_discovery.create_client(
             daemon_info=best_daemon,
             output_callback=lambda line: handle_output_line(line, request.app),
-            status_callback=lambda updates: handle_status_update(updates, request.app)
+            status_callback=lambda updates: handle_status_update(updates, request.app),
         )
 
         if new_client is None:
@@ -431,12 +421,14 @@ async def reconnect_daemon(request: Request) -> HTTPResponse:
 
         request.app.ctx.daemon_client = new_client
 
-        return response.json({
-            "success": True,
-            "daemon_id": best_daemon['daemon_id'],
-            "host": best_daemon['host'],
-            "port": best_daemon['port']
-        })
+        return response.json(
+            {
+                "success": True,
+                "daemon_id": best_daemon["daemon_id"],
+                "host": best_daemon["host"],
+                "port": best_daemon["port"],
+            }
+        )
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
@@ -459,18 +451,13 @@ async def shutdown_daemon(request: Request) -> HTTPResponse:
         # Step 1: Tell daemon to shutdown overmind by calling 'overmind quit'
         import subprocess
         import psutil
-        working_dir = getattr(request.app.ctx, 'working_directory', os.getcwd())
+
+        working_dir = getattr(request.app.ctx, "working_directory", os.getcwd())
 
         print(f"🛑 Executing 'overmind quit' in {working_dir}...")
         try:
             # Call overmind quit
-            result = subprocess.run(
-                ['overmind', 'quit'],
-                cwd=working_dir,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            result = subprocess.run(["overmind", "quit"], cwd=working_dir, capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 print(f"✅ Overmind quit command sent: {result.stdout}")
             else:
@@ -488,9 +475,9 @@ async def shutdown_daemon(request: Request) -> HTTPResponse:
         while time.time() - wait_start < 15:
             # Check if overmind process is still running
             overmind_running = False
-            for proc in psutil.process_iter(['name', 'cmdline']):
+            for proc in psutil.process_iter(["name", "cmdline"]):
                 try:
-                    if proc.info['name'] == 'overmind' or 'overmind' in str(proc.info.get('cmdline', [])):
+                    if proc.info["name"] == "overmind" or "overmind" in str(proc.info.get("cmdline", [])):
                         overmind_running = True
                         break
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -510,16 +497,12 @@ async def shutdown_daemon(request: Request) -> HTTPResponse:
             # Try to get process list from overmind
             try:
                 ps_result = subprocess.run(
-                    ['overmind', 'ps'],
-                    cwd=working_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=5
+                    ["overmind", "ps"], cwd=working_dir, capture_output=True, text=True, timeout=5
                 )
                 if ps_result.returncode == 0:
                     # Parse overmind ps output to find PIDs
                     # Format is usually: "process_name   pid   status"
-                    for line in ps_result.stdout.split('\n'):
+                    for line in ps_result.stdout.split("\n"):
                         parts = line.split()
                         if len(parts) >= 2 and parts[1].isdigit():
                             pid = int(parts[1])
@@ -532,9 +515,9 @@ async def shutdown_daemon(request: Request) -> HTTPResponse:
                 print(f"⚠️ Could not get process list from overmind: {e}")
 
             # Also try to kill overmind itself
-            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            for proc in psutil.process_iter(["pid", "name", "cmdline"]):
                 try:
-                    if proc.info['name'] == 'overmind' or 'overmind' in str(proc.info.get('cmdline', [])):
+                    if proc.info["name"] == "overmind" or "overmind" in str(proc.info.get("cmdline", [])):
                         print(f"🔪 Force killing overmind (PID: {proc.info['pid']})")
                         proc.kill()
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -549,10 +532,7 @@ async def shutdown_daemon(request: Request) -> HTTPResponse:
         # - GUI daemon_monitor_task will detect daemon exit and shutdown GUI
         print("✅ Shutdown sequence completed - cascade in progress...")
 
-        return response.json({
-            "success": True,
-            "message": "Shutdown sequence initiated: overmind → daemon → GUI"
-        })
+        return response.json({"success": True, "message": "Shutdown sequence initiated: overmind → daemon → GUI"})
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
@@ -601,6 +581,7 @@ def setup_api_routes(app):
     """Setup API routes on the app"""
     app.blueprint(api_bp)
 
+
 # Import callback functions from main_daemon for daemon reconnection
 
 
@@ -614,7 +595,7 @@ def handle_output_line(line: str, app_instance):
         update_queue.add_output_line(line, process_name)
     else:
         # Fallback - add as 'system' output
-        update_queue.add_output_line(line, 'system')
+        update_queue.add_output_line(line, "system")
 
 
 def handle_status_update(status_updates: dict, app_instance):

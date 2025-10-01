@@ -22,11 +22,11 @@ class UpdateQueue:
         """Get current state for initial page load"""
         with self.lock:
             return {
-                'output_lines': self.output_lines.copy(),
-                'status_updates': self.status_updates.copy(),
-                'latest_message_id': self.message_counter,
-                'processes': {},  # Will be populated by process manager
-                'stats': {}       # Will be populated by process manager
+                "output_lines": self.output_lines.copy(),
+                "status_updates": self.status_updates.copy(),
+                "latest_message_id": self.message_counter,
+                "processes": {},  # Will be populated by process manager
+                "stats": {},  # Will be populated by process manager
             }
 
     def get_updates_since(self, last_message_id: int) -> Dict[str, Any]:
@@ -38,21 +38,18 @@ class UpdateQueue:
             recent_status = self.status_updates[-50:] if self.status_updates else []
 
             return {
-                'output_lines': recent_output,
-                'status_updates': recent_status,
-                'latest_message_id': self.message_counter
+                "output_lines": recent_output,
+                "status_updates": recent_status,
+                "latest_message_id": self.message_counter,
             }
 
     def add_output_line(self, html: str, process: str):
         """Add an output line"""
         with self.lock:
             self.message_counter += 1
-            self.output_lines.append({
-                'id': self.message_counter,
-                'process': process,
-                'html': html,
-                'timestamp': time.time()
-            })
+            self.output_lines.append(
+                {"id": self.message_counter, "process": process, "html": html, "timestamp": time.time()}
+            )
 
             # Keep only recent lines to avoid memory growth
             if len(self.output_lines) > 1000:
@@ -62,12 +59,9 @@ class UpdateQueue:
         """Add a status update"""
         with self.lock:
             self.message_counter += 1
-            self.status_updates.append({
-                'id': self.message_counter,
-                'process': process,
-                'status': status,
-                'timestamp': time.time()
-            })
+            self.status_updates.append(
+                {"id": self.message_counter, "process": process, "status": status, "timestamp": time.time()}
+            )
 
             # Keep only recent updates
             if len(self.status_updates) > 200:
@@ -89,9 +83,9 @@ class UpdateQueue:
         """Get queue statistics"""
         with self.lock:
             return {
-                'total_messages': self.message_counter,
-                'total_lines': len(self.output_lines),
-                'total_status_updates': len(self.status_updates)
+                "total_messages": self.message_counter,
+                "total_lines": len(self.output_lines),
+                "total_status_updates": len(self.status_updates),
             }
 
 

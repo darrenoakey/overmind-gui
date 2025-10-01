@@ -13,7 +13,7 @@ def find_free_port(start_port=8000, max_attempts=100):
     for port in range(start_port, start_port + max_attempts):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.bind(('', port))
+                sock.bind(("", port))
                 return port
         except OSError:
             continue

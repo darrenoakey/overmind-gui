@@ -22,7 +22,7 @@ class DaemonManager:
 
     def __init__(self, working_directory: str):
         self.working_directory = working_directory
-        self.pid_file = os.path.join(working_directory, 'overmind - daemon.pid')
+        self.pid_file = os.path.join(working_directory, "overmind - daemon.pid")
 
     def is_daemon_running(self) -> bool:
         """Check if daemon is running by checking PID file and process"""
@@ -31,7 +31,7 @@ class DaemonManager:
             return False
 
         try:
-            with open(self.pid_file, 'r') as f:
+            with open(self.pid_file, "r") as f:
                 pid_str = f.read().strip()
 
             if not pid_str.isdigit():
@@ -64,7 +64,7 @@ class DaemonManager:
             return None
 
         try:
-            with open(self.pid_file, 'r') as f:
+            with open(self.pid_file, "r") as f:
                 return int(f.read().strip())
         except Exception as e:
             logger.error(f"Error reading daemon PID: {e}")
@@ -81,14 +81,14 @@ class DaemonManager:
         try:
             # Get path to daemon script
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            daemon_script = os.path.join(script_dir, 'overmind_daemon.py')
+            daemon_script = os.path.join(script_dir, "overmind_daemon.py")
 
             if not os.path.exists(daemon_script):
                 logger.error(f"Daemon script not found: {daemon_script}")
                 return False
 
             # Build command
-            cmd = ['python', daemon_script, '--working-dir', self.working_directory]
+            cmd = ["python", daemon_script, "--working-dir", self.working_directory]
             if overmind_args:
                 cmd.extend(overmind_args)
 
@@ -98,7 +98,7 @@ class DaemonManager:
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                start_new_session=True  # Detach from parent
+                start_new_session=True,  # Detach from parent
             )
 
             # Wait a moment to see if daemon starts
@@ -128,10 +128,7 @@ class DaemonManager:
 
             # First try overmind quit to gracefully shut down overmind
             try:
-                subprocess.run(['overmind', 'quit'],
-                             cwd=self.working_directory,
-                             timeout=10,
-                             capture_output=True)
+                subprocess.run(["overmind", "quit"], cwd=self.working_directory, timeout=10, capture_output=True)
                 logger.info("Sent overmind quit command")
 
                 # Wait for daemon to shut down naturally
@@ -217,7 +214,7 @@ class TestDaemonManager(unittest.TestCase):
         """Test cleanup of stale PID files"""
         # Create a PID file with non - existent PID
         nonexistent_pid = 999999  # Very unlikely to exist
-        with open(self.manager.pid_file, 'w') as f:
+        with open(self.manager.pid_file, "w") as f:
             f.write(str(nonexistent_pid))
 
         # Should detect it's stale and clean up
@@ -228,7 +225,7 @@ class TestDaemonManager(unittest.TestCase):
         """Test detection of valid running process"""
         # Use current process PID as a test
         current_pid = os.getpid()
-        with open(self.manager.pid_file, 'w') as f:
+        with open(self.manager.pid_file, "w") as f:
             f.write(str(current_pid))
 
         # Should detect as running
@@ -238,13 +235,13 @@ class TestDaemonManager(unittest.TestCase):
     def test_invalid_pid_file_content(self):
         """Test handling of invalid PID file content"""
         # Create PID file with invalid content
-        with open(self.manager.pid_file, 'w') as f:
+        with open(self.manager.pid_file, "w") as f:
             f.write("not_a_number")
 
         self.assertFalse(self.manager.is_daemon_running())
         self.assertFalse(os.path.exists(self.manager.pid_file))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Run tests
     unittest.main(verbosity=2)

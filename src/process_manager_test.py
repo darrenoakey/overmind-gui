@@ -347,7 +347,7 @@ class TestProcessManagerBasic(unittest.TestCase):
             manager.load_procfile("non_existent_procfile")
 
         # Test with valid procfile content
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.procfile', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".procfile", delete=False) as f:
             f.write("# Comment line\n")
             f.write("web: python server.py\n")
             f.write("worker: python worker.py\n")
@@ -413,5 +413,5 @@ class TestProcessManagerBasic(unittest.TestCase):
         self.assertEqual(all_output[0], "line 1000")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

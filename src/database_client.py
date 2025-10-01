@@ -21,14 +21,13 @@ class DatabaseClient:
 
     def __init__(self, working_directory: str):
         self.working_directory = working_directory
-        self.db_path = os.path.join(working_directory, 'overmind.db')
+        self.db_path = os.path.join(working_directory, "overmind.db")
 
     def is_database_available(self) -> bool:
         """Check if database exists and is accessible"""
         return os.path.exists(self.db_path)
 
-    def get_output_lines(self, since_id: int = 0, limit: int = 5000,
-                        process_filter: List[str] = None) -> List[Dict]:
+    def get_output_lines(self, since_id: int = 0, limit: int = 5000, process_filter: List[str] = None) -> List[Dict]:
         """
         Get output lines since specified ID with smart limiting
 
@@ -58,9 +57,9 @@ class DatabaseClient:
             logger.error(f"Error querying database: {e}")
             return []
 
-    def _get_initial_lines_limited(self, cursor: sqlite3.Cursor,
-                                  process_filter: List[str] = None,
-                                  limit_per_process: int = 5000) -> List[Dict]:
+    def _get_initial_lines_limited(
+        self, cursor: sqlite3.Cursor, process_filter: List[str] = None, limit_per_process: int = 5000
+    ) -> List[Dict]:
         """
         Get initial lines with per - process limiting
         If web has 1M lines and api has 4 lines, return latest 5000 web + 4 api = 5004 total
@@ -69,53 +68,61 @@ class DatabaseClient:
 
         # Get unique processes
         if process_filter:
-            placeholders = ','.join('?' * len(process_filter))
-            cursor.execute(f'''
+            placeholders = ",".join("?" * len(process_filter))
+            cursor.execute(
+                f"""
                 SELECT DISTINCT process FROM output_lines
                 WHERE process IN ({placeholders})
-            ''', process_filter)
+            """,
+                process_filter,
+            )
         else:
-            cursor.execute('SELECT DISTINCT process FROM output_lines')
+            cursor.execute("SELECT DISTINCT process FROM output_lines")
 
-        processes = [row['process'] for row in cursor.fetchall()]
+        processes = [row["process"] for row in cursor.fetchall()]
 
         # For each process, get the most recent limit_per_process lines
         for process in processes:
-            cursor.execute('''
+            cursor.execute(
+                """
                 SELECT id, process, html
                 FROM output_lines
                 WHERE process = ?
                 ORDER BY id DESC
                 LIMIT ?
-            ''', (process, limit_per_process))
+            """,
+                (process, limit_per_process),
+            )
 
             # Reverse to get chronological order (oldest first)
             process_lines = [dict(row) for row in reversed(cursor.fetchall())]
             lines.extend(process_lines)
 
         # Sort all lines by ID to maintain chronological order
-        lines.sort(key=lambda x: x['id'])
+        lines.sort(key=lambda x: x["id"])
 
-        logger.info(f"Initial load: {len(lines)} lines across {len(processes)} "
-                    f"processes (max {limit_per_process} per process)")
+        logger.info(
+            f"Initial load: {len(lines)} lines across {len(processes)} processes (max {limit_per_process} per process)"
+        )
         return lines
 
-    def _get_incremental_lines(self, cursor: sqlite3.Cursor, since_id: int,
-                              process_filter: List[str] = None) -> List[Dict]:
+    def _get_incremental_lines(
+        self, cursor: sqlite3.Cursor, since_id: int, process_filter: List[str] = None
+    ) -> List[Dict]:
         """Get all lines since specified ID (no per - process limit for incremental)"""
-        query = '''
+        query = """
             SELECT id, process, html
             FROM output_lines
             WHERE id > ?
-        '''
+        """
         params = [since_id]
 
         if process_filter:
-            placeholders = ','.join('?' * len(process_filter))
-            query += f' AND process IN ({placeholders})'
+            placeholders = ",".join("?" * len(process_filter))
+            query += f" AND process IN ({placeholders})"
             params.extend(process_filter)
 
-        query += ' ORDER BY id ASC'
+        query += " ORDER BY id ASC"
 
         cursor.execute(query, params)
         lines = [dict(row) for row in cursor.fetchall()]
@@ -133,7 +140,7 @@ class DatabaseClient:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute('SELECT MAX(id) FROM output_lines')
+                cursor.execute("SELECT MAX(id) FROM output_lines")
                 result = cursor.fetchone()
                 return result[0] if result[0] is not None else 0
         except Exception as e:
@@ -150,19 +157,19 @@ class DatabaseClient:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
 
-                cursor.execute('''
+                cursor.execute("""
                     SELECT process, COUNT(*) as line_count, MIN(id) as first_id, MAX(id) as last_id
                     FROM output_lines
                     GROUP BY process
                     ORDER BY process
-                ''')
+                """)
 
                 stats = {}
                 for row in cursor.fetchall():
-                    stats[row['process']] = {
-                        'line_count': row['line_count'],
-                        'first_id': row['first_id'],
-                        'last_id': row['last_id']
+                    stats[row["process"]] = {
+                        "line_count": row["line_count"],
+                        "first_id": row["first_id"],
+                        "last_id": row["last_id"],
                     }
 
                 return stats
@@ -181,18 +188,18 @@ class TestDatabaseClient(unittest.TestCase):
     def setUp(self):
         """Set up test database"""
         self.test_dir = tempfile.mkdtemp()
-        self.db_path = os.path.join(self.test_dir, 'overmind.db')
+        self.db_path = os.path.join(self.test_dir, "overmind.db")
         self.client = DatabaseClient(self.test_dir)
 
         # Create test database with schema
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
+            conn.execute("""
                 CREATE TABLE output_lines (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     process TEXT NOT NULL,
                     html TEXT NOT NULL
                 )
-            ''')
+            """)
             conn.commit()
 
     def tearDown(self):
@@ -203,8 +210,7 @@ class TestDatabaseClient(unittest.TestCase):
         """Insert test lines (process, html)"""
         with sqlite3.connect(self.db_path) as conn:
             for process, html in lines:
-                conn.execute('INSERT INTO output_lines (process, html) VALUES (?, ?)',
-                           (process, html))
+                conn.execute("INSERT INTO output_lines (process, html) VALUES (?, ?)", (process, html))
             conn.commit()
 
     def test_initial_load_with_limits(self):
@@ -214,11 +220,11 @@ class TestDatabaseClient(unittest.TestCase):
 
         # 10 lines for web process
         for i in range(10):
-            lines.append(('web', f'<span>Web line {i}</span>'))
+            lines.append(("web", f"<span>Web line {i}</span>"))
 
         # 3 lines for api process
         for i in range(3):
-            lines.append(('api', f'<span>API line {i}</span>'))
+            lines.append(("api", f"<span>API line {i}</span>"))
 
         self._insert_test_lines(lines)
 
@@ -229,33 +235,33 @@ class TestDatabaseClient(unittest.TestCase):
         self.assertEqual(len(result), 8)
 
         # Check we got the LATEST 5 web lines (5 - 9, not 0 - 4)
-        web_lines = [r for r in result if r['process'] == 'web']
+        web_lines = [r for r in result if r["process"] == "web"]
         self.assertEqual(len(web_lines), 5)
-        self.assertIn('Web line 5', web_lines[0]['html'])  # Oldest of the 5 we kept
-        self.assertIn('Web line 9', web_lines[-1]['html'])  # Most recent
+        self.assertIn("Web line 5", web_lines[0]["html"])  # Oldest of the 5 we kept
+        self.assertIn("Web line 9", web_lines[-1]["html"])  # Most recent
 
         # Check we got all 3 api lines
-        api_lines = [r for r in result if r['process'] == 'api']
+        api_lines = [r for r in result if r["process"] == "api"]
         self.assertEqual(len(api_lines), 3)
 
     def test_incremental_polling(self):
         """Test incremental polling returns only new lines"""
         # Insert initial lines
         initial_lines = [
-            ('web', '<span>Web line 1</span>'),
-            ('api', '<span>API line 1</span>'),
+            ("web", "<span>Web line 1</span>"),
+            ("api", "<span>API line 1</span>"),
         ]
         self._insert_test_lines(initial_lines)
 
         # Get initial load
         initial_result = self.client.get_output_lines(since_id=0)
         self.assertEqual(len(initial_result), 2)
-        max_id = max(r['id'] for r in initial_result)
+        max_id = max(r["id"] for r in initial_result)
 
         # Add more lines
         new_lines = [
-            ('web', '<span>Web line 2</span>'),
-            ('api', '<span>API line 2</span>'),
+            ("web", "<span>Web line 2</span>"),
+            ("api", "<span>API line 2</span>"),
         ]
         self._insert_test_lines(new_lines)
 
@@ -264,17 +270,17 @@ class TestDatabaseClient(unittest.TestCase):
         self.assertEqual(len(incremental_result), 2)
 
         # Verify content
-        web_new = [r for r in incremental_result if r['process'] == 'web'][0]
-        self.assertIn('Web line 2', web_new['html'])
+        web_new = [r for r in incremental_result if r["process"] == "web"][0]
+        self.assertIn("Web line 2", web_new["html"])
 
     def test_large_dataset_performance(self):
         """Test with large dataset to ensure efficiency"""
         # Insert 1000 lines for web, 5 for api
         lines = []
         for i in range(1000):
-            lines.append(('web', f'<span>Web line {i}</span>'))
+            lines.append(("web", f"<span>Web line {i}</span>"))
         for i in range(5):
-            lines.append(('api', f'<span>API line {i}</span>'))
+            lines.append(("api", f"<span>API line {i}</span>"))
 
         self._insert_test_lines(lines)
 
@@ -290,27 +296,27 @@ class TestDatabaseClient(unittest.TestCase):
         self.assertEqual(len(result), 1005)
 
         # Verify ordering (should be chronological)
-        self.assertTrue(all(result[i]['id'] < result[i + 1]['id'] for i in range(len(result) - 1)))
+        self.assertTrue(all(result[i]["id"] < result[i + 1]["id"] for i in range(len(result) - 1)))
 
     def test_process_stats(self):
         """Test process statistics"""
         lines = [
-            ('web', '<span>Web 1</span>'),
-            ('web', '<span>Web 2</span>'),
-            ('api', '<span>API 1</span>'),
+            ("web", "<span>Web 1</span>"),
+            ("web", "<span>Web 2</span>"),
+            ("api", "<span>API 1</span>"),
         ]
         self._insert_test_lines(lines)
 
         stats = self.client.get_process_stats()
 
-        self.assertEqual(stats['web']['line_count'], 2)
-        self.assertEqual(stats['api']['line_count'], 1)
-        self.assertTrue(stats['web']['first_id'] > 0)
-        self.assertTrue(stats['web']['last_id'] > stats['web']['first_id'])
+        self.assertEqual(stats["web"]["line_count"], 2)
+        self.assertEqual(stats["api"]["line_count"], 1)
+        self.assertTrue(stats["web"]["first_id"] > 0)
+        self.assertTrue(stats["web"]["last_id"] > stats["web"]["first_id"])
 
     def test_database_not_available(self):
         """Test behavior when database doesn't exist"""
-        client = DatabaseClient('/nonexistent/directory')
+        client = DatabaseClient("/nonexistent/directory")
 
         self.assertFalse(client.is_database_available())
         self.assertEqual(client.get_output_lines(), [])
@@ -318,6 +324,6 @@ class TestDatabaseClient(unittest.TestCase):
         self.assertEqual(client.get_process_stats(), {})
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Run tests
     unittest.main(verbosity=2)

@@ -37,7 +37,7 @@ class TestPortUtilsBasic(unittest.TestCase):
         # Try to bind to the port to verify it's available
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             try:
-                sock.bind(('', port))
+                sock.bind(("", port))
                 # If we can bind, the port is available
                 self.assertTrue(True)
             except OSError:
@@ -62,5 +62,5 @@ class TestPortUtilsBasic(unittest.TestCase):
         self.assertLess(port2, 8210)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

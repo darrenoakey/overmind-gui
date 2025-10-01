@@ -37,6 +37,7 @@ async def test_with_playwright():
         return False
 
     import shutil
+
     shutil.copy2(demo_procfile, test_procfile)
     print(f"✓ Copied demo Procfile to {test_procfile}")
 
@@ -48,10 +49,14 @@ async def test_with_playwright():
         main_py = script_dir / "main.py"
 
         server_process = await asyncio.create_subprocess_exec(
-            sys.executable, str(main_py), "--no - ui", "--port", "0",  # port 0 = auto - allocate
+            sys.executable,
+            str(main_py),
+            "--no - ui",
+            "--port",
+            "0",  # port 0 = auto - allocate
             cwd=str(test_dir),
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
         )
 
         # Extract allocated port from server output
@@ -87,6 +92,7 @@ async def test_with_playwright():
         print(f"⏳ Waiting for server to be ready at {url}...")
 
         import aiohttp
+
         async with aiohttp.ClientSession() as session:
             for _ in range(30):
                 try:
@@ -142,7 +148,7 @@ async def test_with_playwright():
                 print("⚠️  No processes visible on page (may be normal for short test)")
 
             # Check console for errors
-            error_messages = [msg for msg in console_messages if msg.type in ['error', 'warning']]
+            error_messages = [msg for msg in console_messages if msg.type in ["error", "warning"]]
             if error_messages:
                 print("⚠️  Browser console messages:")
                 for msg in error_messages[-5:]:  # Show last 5 messages
@@ -160,7 +166,7 @@ async def test_with_playwright():
                 "button:has - text('Stop')",
                 "button[onclick*='shutdown']",
                 ".shutdown - button",
-                "#shutdown - btn"
+                "#shutdown - btn",
             ]
 
             for selector in shutdown_selectors:
@@ -211,21 +217,24 @@ async def test_with_playwright():
                 stderr_data = await server_process.stderr.read()
                 if stderr_data:
                     stderr_text = stderr_data.decode().strip()
-                    stderr_lines = stderr_text.split('\n')
+                    stderr_lines = stderr_text.split("\n")
                     error_lines = []
 
                     for line in stderr_lines:
                         line = line.strip()
-                        if line and not line.startswith('INFO:') and 'DEBUG:' not in line:
+                        if line and not line.startswith("INFO:") and "DEBUG:" not in line:
                             # Filter out common non - error messages
-                            if not any(ignore in line.lower() for ignore in [
-                                'server stopped',
-                                'shutdown complete',
-                                'connection closed',
-                                'task was cancelled',
-                                'cleanup',
-                                'stopping'
-                            ]):
+                            if not any(
+                                ignore in line.lower()
+                                for ignore in [
+                                    "server stopped",
+                                    "shutdown complete",
+                                    "connection closed",
+                                    "task was cancelled",
+                                    "cleanup",
+                                    "stopping",
+                                ]
+                            ):
                                 error_lines.append(line)
 
                     if error_lines:
@@ -268,6 +277,7 @@ async def test_with_playwright():
     except Exception as e:
         print(f"❌ Integration test failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
