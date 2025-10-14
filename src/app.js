@@ -838,7 +838,13 @@ function OvermindApp() {
 
         const clearProcessOutput = (processName) => {
             // Clear output lines for this process
-            setOutputLines(prev => prev.filter(line => line.process !== processName));
+            setAllLines(prev => prev.filter(line => line.process !== processName));
+
+            // Update process line counts
+            setProcessLineCounts(prev => ({
+                ...prev,
+                [processName]: 0
+            }));
 
             // Add a "cleared" marker
             const clearedLine = {
@@ -848,7 +854,13 @@ function OvermindApp() {
                 timestamp: Date.now()
             };
 
-            setOutputLines(prev => [...prev, clearedLine]);
+            setAllLines(prev => [...prev, clearedLine]);
+
+            // Update line count for the cleared marker
+            setProcessLineCounts(prev => ({
+                ...prev,
+                [processName]: 1
+            }));
         };
 
         const handleStartRestartProcess = async (processName, e) => {
