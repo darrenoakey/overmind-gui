@@ -13,6 +13,30 @@
 - Always identify and fix the root cause of errors
 - Clean shutdown means no errors occur, not that we ignore errors that occur
 
+## Project Structure Learnings
+
+### React State Management (app.js)
+- Main output state: `allLines` (array of line objects) and `setAllLines`
+- Line count tracking: `processLineCounts` (object) and `setProcessLineCounts`
+- Line object structure: `{ id, process, html, timestamp }`
+- Always use functional setState: `setState(prev => ...)`
+
+### Inline Event Handlers
+- Context menu handlers defined as inline functions within OvermindApp component
+- Access component state through closures
+- NOT React components - use direct DOM manipulation
+- Variable references in event handlers can become stale after refactoring
+
+### Common Gotchas
+- State variable names may drift between refactorings
+- Event handler closures capture old variable names
+- No compile-time validation for state variable names in event handlers
+- **CODE REVIEW CHECKPOINT**: When refactoring React state, search for ALL references to old state variable names, especially in inline event handlers
+
+### Tooling Decisions
+- **No ESLint**: Project uses native ES modules without build tooling - adding linting would require full Node.js dev environment against project philosophy
+- **Manual validation**: Rely on code review and grep for state variable consistency
+
 ## Continuous Improvement Protocol
 **Execute AGGRESSIVELY at the end of EVERY task before marking complete**
 
