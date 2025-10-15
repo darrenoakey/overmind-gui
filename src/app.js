@@ -149,6 +149,7 @@ function OvermindApp() {
     const searchStateRef = useRef({ searchTerm: '', isSearchActive: false });
     const isManualScrolling = useRef(false);
     const userInteractingWithScrollbar = useRef(false);
+    const clearMarkers = useRef({}); // Track {processName: lastMessageIdWhenCleared}
     
     // Initialize everything and global event listeners
     useEffect(() => {
@@ -304,14 +305,14 @@ function OvermindApp() {
             startDaemonProcessRetry();
             
             // Set up throttled batch processing to prevent UI freezing with large updates
-            let batchedUpdates = [];
-            let updateTimer = null;
-            
+            const batchedUpdates = React.useRef([]);
+            const updateTimer = React.useRef(null);
+
             const flushBatchedUpdates = () => {
-                if (batchedUpdates.length === 0) return;
-                
-                const linesToProcess = batchedUpdates;
-                batchedUpdates = [];
+                if (batchedUpdates.current.length === 0) return;
+
+                const linesToProcess = batchedUpdates.current;
+                batchedUpdates.current = [];
                 
                 console.log(`🔄 Flushing ${linesToProcess.length} batched lines to UI`);
                 
@@ -378,25 +379,40 @@ function OvermindApp() {
             
             // Set up data processor callback - using batched updates for performance
             dataProcessor.current.onBatchProcessed = (processedLines) => {
-                // Add to batch instead of immediately updating
-                batchedUpdates.push(...processedLines);
-                
-                // Clear existing timer and set new one
-                if (updateTimer) {
-                    clearTimeout(updateTimer);
+                // Filter out lines that were cleared (before the clear marker for their process)
+                const filteredLines = processedLines.filter(line => {
+                    const processName = line.processName;
+                    const clearMarker = clearMarkers.current[processName];
+
+                    // If there's a clear marker for this process, only include lines after it
+                    if (clearMarker !== undefined && line.id <= clearMarker) {
+                        console.log(`Filtering out line ${line.id} for ${processName} (clear marker: ${clearMarker})`);
+                        return false;
+                    }
+                    return true;
+                });
+
+                // Add filtered lines to batch
+                if (filteredLines.length > 0) {
+                    batchedUpdates.current.push(...filteredLines);
                 }
-                
+
+                // Clear existing timer and set new one
+                if (updateTimer.current) {
+                    clearTimeout(updateTimer.current);
+                }
+
                 // Flush updates after 50ms of no new data, or immediately if batch gets large
                 const BATCH_SIZE_LIMIT = 200;
                 const BATCH_DELAY = 50;
-                
-                if (batchedUpdates.length >= BATCH_SIZE_LIMIT) {
+
+                if (batchedUpdates.current.length >= BATCH_SIZE_LIMIT) {
                     // Large batch - flush immediately
-                    console.log(`⚡ Large batch (${batchedUpdates.length} lines), flushing immediately`);
+                    console.log(`⚡ Large batch (${batchedUpdates.current.length} lines), flushing immediately`);
                     flushBatchedUpdates();
                 } else {
                     // Small batch - wait for more or timeout
-                    updateTimer = setTimeout(flushBatchedUpdates, BATCH_DELAY);
+                    updateTimer.current = setTimeout(flushBatchedUpdates, BATCH_DELAY);
                 }
             };
             
@@ -837,8 +853,27 @@ function OvermindApp() {
         };
 
         const clearProcessOutput = (processName) => {
-            // Clear output lines for this process
-            setAllLines(prev => prev.filter(line => line.process !== processName));
+            // CRITICAL: Clear any pending batched updates for this process FIRST
+            // to prevent them from being added back after we clear
+            if (updateTimer.current) {
+                clearTimeout(updateTimer.current);
+                updateTimer.current = null;
+            }
+
+            // Filter out any batched lines for this process that haven't been flushed yet
+            batchedUpdates.current = batchedUpdates.current.filter(
+                line => line.processName !== processName
+            );
+
+            // Track the current polling position as the "clear marker" for this process
+            // Any lines with ID <= this marker should be filtered out in future renders
+            if (pollingManager.current) {
+                clearMarkers.current[processName] = pollingManager.current.lastMessageId;
+                console.log(`Clear marker set for ${processName} at message ID ${pollingManager.current.lastMessageId}`);
+            }
+
+            // Clear output lines for this process in the frontend
+            setAllLines(prev => prev.filter(line => line.processName !== processName));
 
             // Update process line counts
             setProcessLineCounts(prev => ({
@@ -846,17 +881,15 @@ function OvermindApp() {
                 [processName]: 0
             }));
 
-            // Add a "cleared" marker
+            // Add a cleared marker to the display
             const clearedLine = {
-                id: Date.now(),
-                process: processName,
-                html: `<span style="color: #666; font-style: italic;">[Output cleared at ${new Date().toLocaleTimeString()}]</span>`,
+                id: Date.now(), // Use timestamp as fake ID for display only
+                processName: processName,
+                htmlContent: `<span style="color: #666; font-style: italic;">[Output cleared at ${new Date().toLocaleTimeString()}]</span>`,
                 timestamp: Date.now()
             };
 
             setAllLines(prev => [...prev, clearedLine]);
-
-            // Update line count for the cleared marker
             setProcessLineCounts(prev => ({
                 ...prev,
                 [processName]: 1
