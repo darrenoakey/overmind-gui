@@ -577,6 +577,83 @@ async def restart_server(request: Request) -> HTTPResponse:
         return response.json({"error": str(e)}, status=500)
 
 
+@api_bp.route("/failure-declarations/<process_name>", methods=["GET"])
+async def get_failure_declarations(request: Request, process_name: str) -> HTTPResponse:
+    """Get failure declarations for a specific process"""
+    try:
+        if not hasattr(request.app.ctx, "process_manager"):
+            return response.json({"error": "Process manager not available"}, status=503)
+
+        declarations = request.app.ctx.process_manager.get_failure_declarations(process_name)
+        return response.json({"process": process_name, "declarations": declarations})
+
+    except Exception as e:
+        return response.json({"error": str(e)}, status=500)
+
+
+@api_bp.route("/failure-declarations/<process_name>/add", methods=["POST"])
+async def add_failure_declaration(request: Request, process_name: str) -> HTTPResponse:
+    """Add a failure declaration for a process"""
+    try:
+        if not hasattr(request.app.ctx, "process_manager"):
+            return response.json({"error": "Process manager not available"}, status=503)
+
+        # Get the failure string from the request body
+        body = request.json
+        if not body or "failure_string" not in body:
+            return response.json({"error": "Missing failure_string in request body"}, status=400)
+
+        failure_string = body["failure_string"].strip()
+        if not failure_string:
+            return response.json({"error": "failure_string cannot be empty"}, status=400)
+
+        success = request.app.ctx.process_manager.add_failure_declaration(process_name, failure_string)
+
+        if success:
+            # Return updated declarations
+            declarations = request.app.ctx.process_manager.get_failure_declarations(process_name)
+            return response.json(
+                {"success": True, "message": f"Added failure declaration for {process_name}", "declarations": declarations}
+            )
+        else:
+            return response.json({"success": False, "error": "Failed to save failure declaration"}, status=500)
+
+    except Exception as e:
+        return response.json({"error": str(e)}, status=500)
+
+
+@api_bp.route("/failure-declarations/<process_name>/remove", methods=["POST"])
+async def remove_failure_declaration(request: Request, process_name: str) -> HTTPResponse:
+    """Remove a failure declaration for a process"""
+    try:
+        if not hasattr(request.app.ctx, "process_manager"):
+            return response.json({"error": "Process manager not available"}, status=503)
+
+        # Get the failure string from the request body
+        body = request.json
+        if not body or "failure_string" not in body:
+            return response.json({"error": "Missing failure_string in request body"}, status=400)
+
+        failure_string = body["failure_string"]
+        success = request.app.ctx.process_manager.remove_failure_declaration(process_name, failure_string)
+
+        if success:
+            # Return updated declarations
+            declarations = request.app.ctx.process_manager.get_failure_declarations(process_name)
+            return response.json(
+                {
+                    "success": True,
+                    "message": f"Removed failure declaration for {process_name}",
+                    "declarations": declarations,
+                }
+            )
+        else:
+            return response.json({"success": False, "error": "Failed to save failure declaration"}, status=500)
+
+    except Exception as e:
+        return response.json({"error": str(e)}, status=500)
+
+
 def setup_api_routes(app):
     """Setup API routes on the app"""
     app.blueprint(api_bp)
@@ -585,14 +662,74 @@ def setup_api_routes(app):
 # Import callback functions from main_daemon for daemon reconnection
 
 
+async def kill_process_on_failure(app_instance, process_name: str, failure_pattern: str):
+    """Kill a process that has matched a failure pattern"""
+    try:
+        import asyncio
+        import os
+        from datetime import datetime
+
+        working_dir = getattr(app_instance.ctx, "working_directory", os.getcwd())
+
+        print(f"🔴 FAILURE DETECTED: Process '{process_name}' matched failure pattern: '{failure_pattern}'")
+        print(f"🔪 Killing process '{process_name}'...")
+
+        # Use direct overmind command to stop process
+        process = await asyncio.create_subprocess_exec(
+            "overmind",
+            "stop",
+            process_name,
+            cwd=working_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await process.wait()
+
+        if process.returncode == 0:
+            print(f"✅ Process '{process_name}' killed successfully")
+
+            # Update process status in process manager
+            if hasattr(app_instance.ctx, "process_manager"):
+                app_instance.ctx.process_manager.update_process_status(process_name, "stopped")
+
+            # Add failure message to output queue
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            failure_message = (
+                f"{process_name} | ❌ PROCESS KILLED: Detected failure pattern '{failure_pattern}' at {timestamp}"
+            )
+            update_queue.add_output_line(failure_message, process_name)
+
+        else:
+            print(f"⚠️ Failed to kill process '{process_name}' (exit code: {process.returncode})")
+
+    except Exception as e:
+        print(f"❌ Error killing process '{process_name}': {e}")
+        import traceback
+
+        traceback.print_exc()
+
+
 def handle_output_line(line: str, app_instance):
     """Handle new output line from daemon client - add to update queue"""
-    # Parse process name from daemon client output
-    process_name = app_instance.ctx.process_manager.add_output_line(line)
+    # Parse process name from daemon client output and check for failure patterns
+    process_name, failure_pattern = app_instance.ctx.process_manager.add_output_line(line)
 
     if process_name:
         # Add to update queue
         update_queue.add_output_line(line, process_name)
+
+        # Check if a failure pattern was detected
+        if failure_pattern:
+            # Kill the process asynchronously
+            import asyncio
+
+            try:
+                # Get the event loop
+                loop = asyncio.get_event_loop()
+                # Schedule the kill task
+                loop.create_task(kill_process_on_failure(app_instance, process_name, failure_pattern))
+            except RuntimeError:
+                print(f"⚠️ Could not schedule process kill for '{process_name}' - no event loop")
     else:
         # Fallback - add as 'system' output
         update_queue.add_output_line(line, "system")

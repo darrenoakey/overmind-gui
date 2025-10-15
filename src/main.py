@@ -119,6 +119,7 @@ app.ctx.version = get_and_increment_version()
 print(f"Starting Overmind GUI (Daemon Mode) v{app.ctx.version}")
 
 # Initialize managers - simplified database - based architecture
+# Note: ProcessManager will be re-initialized with working_directory in initialize_managers()
 app.ctx.process_manager = ProcessManager()
 app.ctx.daemon_manager = None  # Will be set when we know working directory
 app.ctx.database_client = None  # Will be set when we know working directory
@@ -281,6 +282,9 @@ def initialize_managers(app_instance, working_directory: str):
     app_instance.ctx.daemon_manager = DaemonManager(working_directory)
     app_instance.ctx.database_client = DatabaseClient(working_directory)
 
+    # Re-initialize process manager with working directory
+    app_instance.ctx.process_manager = ProcessManager(working_directory)
+
     # Load processes from Procfile - this should never return 0 processes!
     procfile_path = os.path.join(working_directory, "Procfile")
     process_names = app_instance.ctx.process_manager.load_procfile(procfile_path)
@@ -403,7 +407,8 @@ async def daemon_management_task(app_instance, working_directory: str):
             app_instance.ctx.last_poll_id = max(line["id"] for line in initial_lines)
             print(f"📊 Initial load: {len(initial_lines)} lines, latest ID: {app_instance.ctx.last_poll_id}")
 
-            # Process for local tracking
+            # Process for local tracking (but DON'T check for failures in historical lines)
+            # Historical lines are before current process state, so we skip failure detection
             for line in initial_lines:
                 app_instance.ctx.process_manager.add_output_line(line["html"])
 
@@ -434,9 +439,17 @@ async def daemon_management_task(app_instance, working_directory: str):
                     # Update last poll ID
                     app_instance.ctx.last_poll_id = max(line["id"] for line in new_lines)
 
-                    # Process lines for local tracking
+                    # Process lines for local tracking and failure detection
                     for line in new_lines:
-                        app_instance.ctx.process_manager.add_output_line(line["html"])
+                        process_name, failure_pattern = app_instance.ctx.process_manager.add_output_line(line["html"])
+
+                        # Check if a failure pattern was detected
+                        if failure_pattern and process_name:
+                            # Import kill function from api_routes_daemon
+                            from api_routes_daemon import kill_process_on_failure
+
+                            # Schedule process kill
+                            loop.create_task(kill_process_on_failure(app_instance, process_name, failure_pattern))
 
                 # Poll every 250ms for good responsiveness
                 await asyncio.sleep(0.25)

@@ -139,6 +139,8 @@ function OvermindApp() {
     
     const [isShuttingDown, setIsShuttingDown] = useState(false);
     const [isRestarting, setIsRestarting] = useState(false);
+    const [failureDeclarations, setFailureDeclarations] = useState({}); // {processName: [strings]}
+
     // Refs
     const virtuosoRef = useRef(null);
     const dataProcessor = useRef(null);
@@ -211,6 +213,65 @@ function OvermindApp() {
             setVersion('');
         }
     };
+
+    const loadFailureDeclarations = async (processName) => {
+        try {
+            const response = await fetch(`/api/failure-declarations/${processName}`);
+            const data = await response.json();
+            if (data.declarations) {
+                setFailureDeclarations(prev => ({
+                    ...prev,
+                    [processName]: data.declarations
+                }));
+            }
+        } catch (error) {
+            console.error(`Error loading failure declarations for ${processName}:`, error);
+        }
+    };
+
+    const addFailureDeclaration = async (processName, failureString) => {
+        try {
+            const response = await fetch(`/api/failure-declarations/${processName}/add`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ failure_string: failureString })
+            });
+            const data = await response.json();
+            if (data.success && data.declarations) {
+                setFailureDeclarations(prev => ({
+                    ...prev,
+                    [processName]: data.declarations
+                }));
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error(`Error adding failure declaration for ${processName}:`, error);
+            return false;
+        }
+    };
+
+    const removeFailureDeclaration = async (processName, failureString) => {
+        try {
+            const response = await fetch(`/api/failure-declarations/${processName}/remove`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ failure_string: failureString })
+            });
+            const data = await response.json();
+            if (data.success && data.declarations) {
+                setFailureDeclarations(prev => ({
+                    ...prev,
+                    [processName]: data.declarations
+                }));
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error(`Error removing failure declaration for ${processName}:`, error);
+            return false;
+        }
+    };
     
     const loadProcessList = async () => {
         try {
@@ -253,6 +314,12 @@ function OvermindApp() {
                 };
 
                 setProcesses(processesWithSystem);
+
+                // Load failure declarations for all processes
+                Object.keys(data.processes).forEach(processName => {
+                    loadFailureDeclarations(processName);
+                });
+
                 return true; // Success
             } else {
                 console.log('⚠️ No processes returned from daemon yet');
@@ -792,6 +859,26 @@ function OvermindApp() {
                 { separator: true },
                 { label: 'Clear Output', action: () => clearProcessOutput(processName) }
             ];
+
+            // Add failure declarations removal options if any exist
+            const declarations = failureDeclarations[processName] || [];
+            if (declarations.length > 0) {
+                menuItems.push({ separator: true });
+                declarations.forEach(declaration => {
+                    menuItems.push({
+                        label: `Remove: "${declaration.length > 30 ? declaration.substring(0, 30) + '...' : declaration}"`,
+                        action: async () => {
+                            console.log(`Removing failure declaration: "${declaration}" from ${processName}`);
+                            const success = await removeFailureDeclaration(processName, declaration);
+                            if (success) {
+                                console.log('✅ Failure declaration removed successfully');
+                            } else {
+                                console.error('❌ Failed to remove failure declaration');
+                            }
+                        }
+                    });
+                });
+            }
 
             menuItems.forEach(item => {
                 if (item.separator) {
@@ -1412,6 +1499,124 @@ function OvermindApp() {
                     key: 'virtuoso-container',
                     className: 'output-container',
                     style: { flex: 1 },
+                    onContextMenu: (e) => {
+                        // Handle right-click on output lines
+                        const selection = window.getSelection();
+                        const selectedText = selection.toString().trim();
+
+                        // Only show menu if text is selected and it's from a single line
+                        if (selectedText && selectedText.split('\n').length === 1) {
+                            e.preventDefault();
+
+                            // Find which process this line belongs to by looking at the selected element
+                            let processName = null;
+                            const range = selection.getRangeAt(0);
+                            let container = range.commonAncestorContainer;
+
+                            // Walk up the DOM to find the output-line div
+                            while (container && container.nodeType !== 1) {
+                                container = container.parentNode;
+                            }
+
+                            // Look for data-process attribute or extract from the line content
+                            if (container) {
+                                // Find the line in filteredLines by searching for matching content
+                                const lineElement = container.closest('.output-line');
+                                if (lineElement) {
+                                    const lineHTML = lineElement.innerHTML;
+                                    // Find the line in filteredLines
+                                    const matchedLine = filteredLines.find(line => lineHTML.includes(line.htmlContent) || line.htmlContent.includes(selectedText));
+                                    if (matchedLine) {
+                                        processName = matchedLine.processName;
+                                    }
+                                }
+                            }
+
+                            if (!processName) {
+                                console.log('Could not determine process name for selected text');
+                                return;
+                            }
+
+                            console.log(`Selected text from process ${processName}: "${selectedText}"`);
+
+                            // Create context menu
+                            const existingMenu = document.querySelector('.text-selection-context-menu');
+                            if (existingMenu) {
+                                existingMenu.remove();
+                            }
+
+                            const menu = document.createElement('div');
+                            menu.className = 'text-selection-context-menu';
+                            menu.style.cssText = `
+                                position: fixed;
+                                left: ${e.clientX}px;
+                                top: ${e.clientY}px;
+                                z-index: 10001;
+                                background: #1a1a1a;
+                                border: 1px solid #333;
+                                border-radius: 4px;
+                                padding: 4px 0;
+                                min-width: 150px;
+                                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                            `;
+
+                            const menuItem = document.createElement('div');
+                            menuItem.textContent = 'Declare Failed';
+                            menuItem.style.cssText = `
+                                padding: 8px 16px;
+                                cursor: pointer;
+                                color: #ff6b6b;
+                                font-size: 14px;
+                                white-space: nowrap;
+                            `;
+
+                            menuItem.addEventListener('mouseenter', () => {
+                                menuItem.style.backgroundColor = '#2a2a2a';
+                            });
+
+                            menuItem.addEventListener('mouseleave', () => {
+                                menuItem.style.backgroundColor = 'transparent';
+                            });
+
+                            menuItem.addEventListener('click', async () => {
+                                console.log(`Adding failure declaration: "${selectedText}" for process ${processName}`);
+                                const success = await addFailureDeclaration(processName, selectedText);
+                                if (success) {
+                                    console.log('✅ Failure declaration added successfully');
+                                } else {
+                                    console.error('❌ Failed to add failure declaration');
+                                }
+                                menu.remove();
+                                selection.removeAllRanges();
+                            });
+
+                            menu.appendChild(menuItem);
+                            document.body.appendChild(menu);
+
+                            // Adjust position if menu goes off-screen
+                            const rect = menu.getBoundingClientRect();
+                            if (rect.right > window.innerWidth) {
+                                menu.style.left = `${e.clientX - rect.width}px`;
+                            }
+                            if (rect.bottom > window.innerHeight) {
+                                menu.style.top = `${e.clientY - rect.height}px`;
+                            }
+
+                            // Click away to close
+                            const closeMenu = (event) => {
+                                if (!menu.contains(event.target)) {
+                                    menu.remove();
+                                    document.removeEventListener('click', closeMenu);
+                                    document.removeEventListener('contextmenu', closeMenu);
+                                }
+                            };
+
+                            setTimeout(() => {
+                                document.addEventListener('click', closeMenu);
+                                document.addEventListener('contextmenu', closeMenu);
+                            }, 0);
+                        }
+                    },
                     onWheel: (e) => {
                         isManualScrolling.current = true;
                         // Immediately disable auto-scroll on any wheel scroll up
