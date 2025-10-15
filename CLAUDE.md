@@ -37,6 +37,20 @@
 - **No ESLint**: Project uses native ES modules without build tooling - adding linting would require full Node.js dev environment against project philosophy
 - **Manual validation**: Rely on code review and grep for state variable consistency
 
+### Failure Declaration System Architecture
+- **Configuration Location**: failure_declarations.json stored in Procfile directory (alongside Procfile)
+- **State Management**: ProcessManager owns failure declarations, loaded on initialization
+- **Detection Flow**: ProcessInfo.add_output() → returns matched pattern → triggers kill in polling loop
+- **Process Restart Awareness**: ProcessInfo.restart() clears failure state, initial load skips detection
+- **Frontend Integration**: Text selection + context menu → API call → immediate activation
+- **API Pattern**: RESTful endpoints for get/add/remove declarations per process
+
+### React Context Menu Pattern
+- Inline event handlers in JSX can access component state through closures
+- Text selection detection: window.getSelection() + range analysis to find process
+- Context menu positioning: Check screen bounds and adjust menu placement
+- Click-away pattern: setTimeout + addEventListener for proper event ordering
+
 ## Continuous Improvement Protocol
 **Execute AGGRESSIVELY at the end of EVERY task before marking complete**
 
