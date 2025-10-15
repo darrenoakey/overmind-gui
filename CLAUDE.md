@@ -50,6 +50,12 @@
 - Text selection detection: window.getSelection() + range analysis to find process
 - Context menu positioning: Check screen bounds and adjust menu placement
 - Click-away pattern: setTimeout + addEventListener for proper event ordering
+- **Hybrid Approach**: React for state, vanilla DOM for transient UI (menus) - avoids re-render overhead
+
+### Python Patterns Discovered
+- **Tuple Returns for Multi-Value**: Use `tuple[Optional[str], Optional[str]]` when function needs to return multiple related values
+- **Async Fire-and-Forget**: `loop.create_task(coroutine)` in Sanic for background operations within request handlers
+- **JSON Config Files**: Store in working directory (Procfile location), not project root - follows user's working context
 
 ## Continuous Improvement Protocol
 **Execute AGGRESSIVELY at the end of EVERY task before marking complete**

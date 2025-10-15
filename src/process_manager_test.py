@@ -134,12 +134,14 @@ class TestProcessManagerBasic(unittest.TestCase):
         manager.processes["web"] = ProcessInfo("web")
 
         # Test valid format
-        result = manager.add_output_line("web | Starting server")
-        self.assertEqual(result, "web")
+        process_name, failure_pattern = manager.add_output_line("web | Starting server")
+        self.assertEqual(process_name, "web")
+        self.assertIsNone(failure_pattern)
 
         # Test invalid format
-        result = manager.add_output_line("invalid line")
-        self.assertIsNone(result)
+        process_name, failure_pattern = manager.add_output_line("invalid line")
+        self.assertIsNone(process_name)
+        self.assertIsNone(failure_pattern)
 
     def test_stats_generation(self):
         """Test generating process statistics"""
@@ -231,7 +233,7 @@ class TestProcessManagerBasic(unittest.TestCase):
         result = manager.to_dict()
         self.assertIn("processes", result)
         self.assertIn("stats", result)
-        self.assertIn("warning_config", result)
+        self.assertIn("failure_declarations", result)
 
     def test_get_selected_processes(self):
         """Test getting only selected processes"""
@@ -268,11 +270,11 @@ class TestProcessManagerBasic(unittest.TestCase):
         process.set_status("running")
         # This should have called restart internally, clearing any broken status
 
-    def test_warning_config_load_failure_handling(self):
-        """Test that manager handles missing warning config gracefully"""
+    def test_failure_declarations_load_failure_handling(self):
+        """Test that manager handles missing failure declarations gracefully"""
         manager = ProcessManager()
-        # The constructor should handle missing overmind_warnings.json file
-        self.assertIsInstance(manager.warning_config, dict)
+        # The constructor should handle missing failure_declarations.json file
+        self.assertIsInstance(manager.failure_declarations, dict)
 
     def test_output_parsing_with_unknown_process(self):
         """Test output line parsing when process is not in the manager"""
@@ -280,12 +282,14 @@ class TestProcessManagerBasic(unittest.TestCase):
         manager.processes["known"] = ProcessInfo("known")
 
         # Test with unknown process
-        result = manager.add_output_line("unknown | output line")
-        self.assertIsNone(result)
+        process_name, failure_pattern = manager.add_output_line("unknown | output line")
+        self.assertIsNone(process_name)
+        self.assertIsNone(failure_pattern)
 
         # Test with known process
-        result = manager.add_output_line("known | output line")
-        self.assertEqual(result, "known")
+        process_name, failure_pattern = manager.add_output_line("known | output line")
+        self.assertEqual(process_name, "known")
+        self.assertIsNone(failure_pattern)
 
     def test_stats_with_different_statuses(self):
         """Test stats generation with various process statuses"""
@@ -372,16 +376,19 @@ class TestProcessManagerBasic(unittest.TestCase):
         manager.processes["test"] = ProcessInfo("test")
 
         # Test line without " | " separator
-        result = manager.add_output_line("just a regular line")
-        self.assertIsNone(result)
+        process_name, failure_pattern = manager.add_output_line("just a regular line")
+        self.assertIsNone(process_name)
+        self.assertIsNone(failure_pattern)
 
         # Test line with empty parts
-        result = manager.add_output_line(" | ")
-        self.assertIsNone(result)
+        process_name, failure_pattern = manager.add_output_line(" | ")
+        self.assertIsNone(process_name)
+        self.assertIsNone(failure_pattern)
 
         # Test line with multiple separators
-        result = manager.add_output_line("test | output | with | multiple | separators")
-        self.assertEqual(result, "test")
+        process_name, failure_pattern = manager.add_output_line("test | output | with | multiple | separators")
+        self.assertEqual(process_name, "test")
+        self.assertIsNone(failure_pattern)
 
     def test_broken_status_edge_cases(self):
         """Test broken status detection edge cases"""
@@ -411,6 +418,118 @@ class TestProcessManagerBasic(unittest.TestCase):
         all_output = process.get_all_output()
         self.assertEqual(all_output[-1], "line 5999")
         self.assertEqual(all_output[0], "line 1000")
+
+
+    def test_failure_declarations_add_and_remove(self):
+        """Test adding and removing failure declarations"""
+        import tempfile
+        import os
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = ProcessManager(working_directory=temp_dir)
+
+            # Add failure declaration
+            success = manager.add_failure_declaration("web", "Connection refused")
+            self.assertTrue(success)
+            self.assertEqual(manager.get_failure_declarations("web"), ["Connection refused"])
+
+            # Add another declaration for same process
+            manager.add_failure_declaration("web", "Timeout error")
+            declarations = manager.get_failure_declarations("web")
+            self.assertEqual(len(declarations), 2)
+            self.assertIn("Connection refused", declarations)
+            self.assertIn("Timeout error", declarations)
+
+            # Add declaration for different process
+            manager.add_failure_declaration("worker", "Fatal error")
+            self.assertEqual(manager.get_failure_declarations("worker"), ["Fatal error"])
+
+            # Remove declaration
+            success = manager.remove_failure_declaration("web", "Connection refused")
+            self.assertTrue(success)
+            self.assertEqual(manager.get_failure_declarations("web"), ["Timeout error"])
+
+            # Remove last declaration should remove process key
+            manager.remove_failure_declaration("web", "Timeout error")
+            self.assertEqual(manager.get_failure_declarations("web"), [])
+
+    def test_failure_declarations_persistence(self):
+        """Test that failure declarations persist to JSON file"""
+        import tempfile
+        import os
+        import json
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create first manager and add declarations
+            manager1 = ProcessManager(working_directory=temp_dir)
+            manager1.add_failure_declaration("web", "Connection refused")
+            manager1.add_failure_declaration("worker", "Fatal error")
+
+            # Verify file was created
+            config_path = os.path.join(temp_dir, "failure_declarations.json")
+            self.assertTrue(os.path.exists(config_path))
+
+            # Read file contents
+            with open(config_path, "r") as f:
+                data = json.load(f)
+            self.assertEqual(data["web"], ["Connection refused"])
+            self.assertEqual(data["worker"], ["Fatal error"])
+
+            # Create second manager and verify it loads declarations
+            manager2 = ProcessManager(working_directory=temp_dir)
+            self.assertEqual(manager2.get_failure_declarations("web"), ["Connection refused"])
+            self.assertEqual(manager2.get_failure_declarations("worker"), ["Fatal error"])
+
+    def test_failure_declarations_no_duplicates(self):
+        """Test that duplicate declarations are not added"""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = ProcessManager(working_directory=temp_dir)
+
+            # Add same declaration twice
+            manager.add_failure_declaration("web", "Connection refused")
+            manager.add_failure_declaration("web", "Connection refused")
+
+            # Should only have one
+            self.assertEqual(manager.get_failure_declarations("web"), ["Connection refused"])
+
+    def test_failure_pattern_detection_returns_match(self):
+        """Test that ProcessInfo.add_output returns matched failure pattern"""
+        process = ProcessInfo("web")
+        process.set_warning_patterns(["Connection refused", "Timeout error"])
+
+        # Add normal output
+        result = process.add_output("Starting server...")
+        self.assertIsNone(result)
+
+        # Add output with failure pattern
+        result = process.add_output("ERROR: Connection refused on port 8080")
+        self.assertEqual(result, "Connection refused")
+        self.assertTrue(process.is_broken())
+
+    def test_add_output_line_returns_failure_pattern(self):
+        """Test that ProcessManager.add_output_line returns failure pattern"""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = ProcessManager(working_directory=temp_dir)
+            manager.add_failure_declaration("web", "Connection refused")
+
+            # Create process
+            process = ProcessInfo("web")
+            process.set_warning_patterns(["Connection refused"])
+            manager.processes["web"] = process
+
+            # Add normal line
+            process_name, failure_pattern = manager.add_output_line("web | Starting server...")
+            self.assertEqual(process_name, "web")
+            self.assertIsNone(failure_pattern)
+
+            # Add line with failure pattern
+            process_name, failure_pattern = manager.add_output_line("web | ERROR: Connection refused")
+            self.assertEqual(process_name, "web")
+            self.assertEqual(failure_pattern, "Connection refused")
 
 
 if __name__ == "__main__":
