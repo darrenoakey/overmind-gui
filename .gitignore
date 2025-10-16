@@ -149,3 +149,6 @@ Desktop.ini
 # Project-specific directories (per CLAUDE.md standards)
 output/
 local/
+
+# MCP server artifacts
+.playwright-mcp/

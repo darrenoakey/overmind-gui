@@ -152,6 +152,8 @@ function OvermindApp() {
     const isManualScrolling = useRef(false);
     const userInteractingWithScrollbar = useRef(false);
     const clearMarkers = useRef({}); // Track {processName: lastMessageIdWhenCleared}
+    const batchedUpdates = useRef([]);
+    const updateTimer = useRef(null);
     
     // Initialize everything and global event listeners
     useEffect(() => {
@@ -370,11 +372,8 @@ function OvermindApp() {
             };
 
             startDaemonProcessRetry();
-            
-            // Set up throttled batch processing to prevent UI freezing with large updates
-            const batchedUpdates = React.useRef([]);
-            const updateTimer = React.useRef(null);
 
+            // Set up throttled batch processing to prevent UI freezing with large updates
             const flushBatchedUpdates = () => {
                 if (batchedUpdates.current.length === 0) return;
 
@@ -1493,7 +1492,7 @@ function OvermindApp() {
             ]),
             
             // Output panel with React Virtuoso
-            React.createElement('main', { className: 'output-panel' }, [
+            React.createElement('main', { className: 'output-panel' },
                 // React Virtuoso container (no header bar)
                 React.createElement('div', {
                     key: 'virtuoso-container',
@@ -1683,7 +1682,7 @@ function OvermindApp() {
                         }
                     })
                 )
-            ])
+            )
         ),
         
         // Floating auto-scroll button (only when not auto-scrolling)
