@@ -57,6 +57,25 @@
 - **Async Fire-and-Forget**: `loop.create_task(coroutine)` in Sanic for background operations within request handlers
 - **JSON Config Files**: Store in working directory (Procfile location), not project root - follows user's working context
 
+### Native Daemon Architecture (Direct Process Management)
+- **Dual Daemon Support**: System supports both overmind-based (legacy) and native (direct) process management
+- **Daemon Selection**: `--overmind` flag enables legacy mode, default is native mode without tmux/overmind dependency
+- **Module Structure**:
+  - `procfile_parser.py`: Standalone Procfile parser with validation
+  - `output_formatter.py`: Color allocation and ANSI formatting (mimics overmind's output)
+  - `native_process_manager.py`: Per-process threading for stdout/stderr capture
+  - `native_daemon.py`: Main daemon orchestration
+  - `native_ctl.py`: CLI commands (ps, restart, stop, quit, status)
+  - `native_daemon_manager.py`: Daemon lifecycle (start/stop/pid management)
+- **Threading Pattern**: Each managed process spawns 3 threads: stdout capture, stderr capture, process monitor
+- **Process Lifecycle**: `preexec_fn=os.setsid` creates process group for clean SIGTERM/SIGKILL handling
+- **Output Flow**: subprocess stdout/stderr → format with process name/color → convert ANSI to HTML → database
+- **Color Allocation**: 12 colors cycle for N processes, matches overmind's color scheme
+- **Alignment**: Process names padded to longest name length for consistent "processname | text" format
+- **Database Compatibility**: Uses same SQLite schema as overmind daemon for GUI compatibility
+- **Manager Abstraction**: Both DaemonManager and NativeDaemonManager expose same interface (is_daemon_running, start_daemon, stop_daemon)
+- **Integration Point**: main.py's `initialize_managers()` chooses daemon type based on flag, rest of system is agnostic
+
 ## Continuous Improvement Protocol
 **Execute AGGRESSIVELY at the end of EVERY task before marking complete**
 
