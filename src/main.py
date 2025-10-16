@@ -30,6 +30,7 @@ from sanic import Sanic, response
 # Import our modules
 from process_manager import ProcessManager
 from daemon_manager import DaemonManager
+from native_daemon_manager import NativeDaemonManager
 from database_client import DatabaseClient
 from static_files import setup_static_routes
 from api_routes_daemon import setup_api_routes, handle_output_line, handle_status_update
@@ -277,9 +278,18 @@ async def shutdown_server(request):
 # -----------------------------------------------------------------------------
 
 
-def initialize_managers(app_instance, working_directory: str):
+def initialize_managers(app_instance, working_directory: str, use_overmind: bool = False):
     """Initialize daemon and database managers once we know working directory"""
-    app_instance.ctx.daemon_manager = DaemonManager(working_directory)
+    # Choose daemon manager based on mode
+    if use_overmind:
+        print("📦 Using overmind daemon (legacy mode)")
+        app_instance.ctx.daemon_manager = DaemonManager(working_directory)
+        app_instance.ctx.daemon_mode = "overmind"
+    else:
+        print("🚀 Using native daemon (direct process management)")
+        app_instance.ctx.daemon_manager = NativeDaemonManager(working_directory)
+        app_instance.ctx.daemon_mode = "native"
+
     app_instance.ctx.database_client = DatabaseClient(working_directory)
 
     # Re-initialize process manager with working directory
@@ -373,8 +383,11 @@ async def daemon_management_task(app_instance, working_directory: str):
         # Store working directory in context for other functions
         app_instance.ctx.working_directory = working_dir
 
+        # Get daemon mode from app context (set in main())
+        use_overmind = getattr(app_instance.ctx, "use_overmind", False)
+
         # Initialize managers
-        initialize_managers(app_instance, working_dir)
+        initialize_managers(app_instance, working_dir, use_overmind)
 
         # Ensure daemon is running
         print("🔄 Ensuring daemon is running...")
@@ -859,6 +872,11 @@ def main():
     parser.add_argument(
         "--working-dir", type=str, default=None, help="Working directory (defaults to current directory)"
     )
+    parser.add_argument(
+        "--overmind",
+        action="store_true",
+        help="Use overmind daemon (legacy mode with tmux). Default is native daemon (direct process management)."
+    )
 
     # Parse known args - we don't pass args to daemon since daemon is independent
     args, unknown_args = parser.parse_known_args()
@@ -896,7 +914,14 @@ def main():
     os.environ["OVERMIND_GUI_WORKING_DIR"] = working_dir
     app.ctx.working_directory = working_dir
 
+    # Store daemon mode flag
+    app.ctx.use_overmind = args.overmind
+
     print(f"📁 WORKING DIRECTORY STORED: {working_dir}")
+    if args.overmind:
+        print("📦 DAEMON MODE: overmind (legacy)")
+    else:
+        print("🚀 DAEMON MODE: native (default)")
 
     if args.ui:
         # Running as UI subprocess - MUST use the allocated port
