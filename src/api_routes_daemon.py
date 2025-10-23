@@ -115,9 +115,26 @@ async def poll_updates(request: Request) -> HTTPResponse:
             status_updates = {}
             if hasattr(request.app.ctx, "process_manager"):
                 stats = request.app.ctx.process_manager.get_stats()
-                # Get all processes for status updates
-                processes = request.app.ctx.process_manager.get_all_processes()
-                status_updates = {name: proc.status for name, proc in processes.items()}
+
+                # For native mode, get status from database (daemon writes it there)
+                # For overmind mode, use local process manager (updated via poll_overmind_status)
+                daemon_mode = getattr(request.app.ctx, "daemon_mode", "overmind")
+                if daemon_mode == "native":
+                    # Get status from database
+                    db_status = db_client.get_process_status_updates()
+                    if db_status:
+                        status_updates = db_status
+                        # Also update local process manager for consistency
+                        for name, status in db_status.items():
+                            request.app.ctx.process_manager.update_process_status(name, status)
+                    else:
+                        # Fallback to local process manager
+                        processes = request.app.ctx.process_manager.get_all_processes()
+                        status_updates = {name: proc.status for name, proc in processes.items()}
+                else:
+                    # Overmind mode - use local process manager
+                    processes = request.app.ctx.process_manager.get_all_processes()
+                    status_updates = {name: proc.status for name, proc in processes.items()}
 
             # Format response to match frontend expectations
             response_data = {
@@ -136,35 +153,54 @@ async def poll_updates(request: Request) -> HTTPResponse:
         return response.json({"error": str(e)}, status=500)
 
 
+async def _execute_daemon_command(request: Request, command: str, process_name: str) -> tuple:
+    """
+    Execute a daemon command (start/stop/restart) using the appropriate CLI
+    Returns: (success: bool, message: str)
+    """
+    import asyncio
+    import os
+    import sys
+
+    working_dir = getattr(request.app.ctx, "working_directory", os.getcwd())
+    daemon_cli = getattr(request.app.ctx, "daemon_cli", "overmind")
+    daemon_mode = getattr(request.app.ctx, "daemon_mode", "overmind")
+
+    # Build CLI command
+    if daemon_mode == "native":
+        # native_ctl.py requires python interpreter
+        cli_cmd = [sys.executable, daemon_cli, "--working-dir", working_dir, command, process_name]
+    else:
+        # overmind is a standalone binary
+        cli_cmd = [daemon_cli, command, process_name]
+
+    # Execute
+    process = await asyncio.create_subprocess_exec(
+        *cli_cmd,
+        cwd=working_dir,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await process.wait()
+
+    success = process.returncode == 0
+    stderr = (await process.stderr.read()).decode() if process.stderr else ""
+
+    return success, stderr
+
+
 @api_bp.route("/process/<process_name>/start", methods=["POST"])
 async def start_process(request: Request, process_name: str) -> HTTPResponse:
-    """Start a specific process via direct overmind command"""
+    """Start a specific process"""
     try:
-        import asyncio
-        import os
-
-        working_dir = getattr(request.app.ctx, "working_directory", os.getcwd())
-
-        # Use direct overmind command to start process
-        process = await asyncio.create_subprocess_exec(
-            "overmind",
-            "start",
-            process_name,
-            cwd=working_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await process.wait()
-
-        success = process.returncode == 0
+        success, stderr = await _execute_daemon_command(request, "start", process_name)
 
         if success:
-            # Update process status in local manager
             if hasattr(request.app.ctx, "process_manager"):
                 request.app.ctx.process_manager.update_process_status(process_name, "running")
             return response.json({"success": True, "message": f"Started {process_name}"})
         else:
-            return response.json({"success": False, "error": f"Failed to start {process_name}"})
+            return response.json({"success": False, "error": f"Failed to start {process_name}: {stderr}"})
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
@@ -172,33 +208,16 @@ async def start_process(request: Request, process_name: str) -> HTTPResponse:
 
 @api_bp.route("/process/<process_name>/stop", methods=["POST"])
 async def stop_process(request: Request, process_name: str) -> HTTPResponse:
-    """Stop a specific process via direct overmind command"""
+    """Stop a specific process"""
     try:
-        import asyncio
-        import os
-
-        working_dir = getattr(request.app.ctx, "working_directory", os.getcwd())
-
-        # Use direct overmind command to stop process
-        process = await asyncio.create_subprocess_exec(
-            "overmind",
-            "stop",
-            process_name,
-            cwd=working_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await process.wait()
-
-        success = process.returncode == 0
+        success, stderr = await _execute_daemon_command(request, "stop", process_name)
 
         if success:
-            # Update process status in local manager
             if hasattr(request.app.ctx, "process_manager"):
                 request.app.ctx.process_manager.update_process_status(process_name, "stopped")
             return response.json({"success": True, "message": f"Stopped {process_name}"})
         else:
-            return response.json({"success": False, "error": f"Failed to stop {process_name}"})
+            return response.json({"success": False, "error": f"Failed to stop {process_name}: {stderr}"})
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
@@ -206,33 +225,16 @@ async def stop_process(request: Request, process_name: str) -> HTTPResponse:
 
 @api_bp.route("/process/<process_name>/restart", methods=["POST"])
 async def restart_process(request: Request, process_name: str) -> HTTPResponse:
-    """Restart a specific process via daemon client"""
+    """Restart a specific process"""
     try:
-        import asyncio
-        import os
-
-        working_dir = getattr(request.app.ctx, "working_directory", os.getcwd())
-
-        # Use direct overmind command to restart process
-        process = await asyncio.create_subprocess_exec(
-            "overmind",
-            "restart",
-            process_name,
-            cwd=working_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await process.wait()
-
-        success = process.returncode == 0
+        success, stderr = await _execute_daemon_command(request, "restart", process_name)
 
         if success:
-            # Mark process as restarted in process manager
             if hasattr(request.app.ctx, "process_manager"):
                 request.app.ctx.process_manager.restart_process(process_name)
             return response.json({"success": True, "message": f"Restarted {process_name}"})
         else:
-            return response.json({"success": False, "error": f"Failed to restart {process_name}"})
+            return response.json({"success": False, "error": f"Failed to restart {process_name}: {stderr}"})
 
     except Exception as e:
         return response.json({"error": str(e)}, status=500)
@@ -436,105 +438,46 @@ async def reconnect_daemon(request: Request) -> HTTPResponse:
 
 @api_bp.route("/shutdown", methods=["POST"])
 async def shutdown_daemon(request: Request) -> HTTPResponse:
-    """Initiate proper shutdown sequence: stop overmind via daemon, then daemon exits, then GUI exits"""
+    """Initiate proper shutdown sequence using daemon manager"""
     try:
-        # Check if we have database client (which means daemon is running)
-        if not hasattr(request.app.ctx, "database_client") or not request.app.ctx.database_client:
-            return response.json({"error": "Database client not available"}, status=503)
+        # Check if we have daemon manager
+        if not hasattr(request.app.ctx, "daemon_manager") or not request.app.ctx.daemon_manager:
+            return response.json({"error": "Daemon manager not available"}, status=503)
 
-        print("🔄 Initiating shutdown sequence...")
+        print("=" * 70)
+        print("🔄 SHUTDOWN: Initiating graceful shutdown sequence")
+        print("=" * 70)
+
+        # Get daemon mode for logging
+        daemon_mode = getattr(request.app.ctx, "daemon_mode", "unknown")
+        print(f"🔍 SHUTDOWN: Daemon mode is: {daemon_mode}")
 
         # CRITICAL: Set shutdown flag FIRST to prevent daemon auto-restart
         request.app.ctx.shutdown_initiated = True
-        print("✅ Set shutdown_initiated flag to prevent daemon auto-restart")
+        print("✅ SHUTDOWN: Set shutdown_initiated flag to prevent daemon auto-restart")
 
-        # Step 1: Tell daemon to shutdown overmind by calling 'overmind quit'
-        import subprocess
-        import psutil
+        # Use daemon manager to stop the daemon (works for both overmind and native)
+        daemon_manager = request.app.ctx.daemon_manager
 
-        working_dir = getattr(request.app.ctx, "working_directory", os.getcwd())
+        print(f"🛑 SHUTDOWN: Stopping {daemon_mode} daemon via daemon manager...")
+        success = daemon_manager.stop_daemon()
 
-        print(f"🛑 Executing 'overmind quit' in {working_dir}...")
-        try:
-            # Call overmind quit
-            result = subprocess.run(["overmind", "quit"], cwd=working_dir, capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                print(f"✅ Overmind quit command sent: {result.stdout}")
-            else:
-                print(f"⚠️ Overmind quit failed: {result.stderr}")
-        except subprocess.TimeoutExpired:
-            print("⚠️ Overmind quit command timed out")
-        except Exception as e:
-            print(f"⚠️ Error executing overmind quit: {e}")
+        if success:
+            print("✅ Daemon stopped successfully")
 
-        # Step 2: Wait for overmind process to exit (up to 15 seconds)
-        print("⏳ Waiting for overmind to exit (up to 15 seconds)...")
-        wait_start = time.time()
-        overmind_exited = False
+            # The cascade will continue:
+            # - GUI daemon_monitor_task will detect daemon exit and shutdown GUI
+            print("✅ Shutdown sequence completed - cascade in progress...")
 
-        while time.time() - wait_start < 15:
-            # Check if overmind process is still running
-            overmind_running = False
-            for proc in psutil.process_iter(["name", "cmdline"]):
-                try:
-                    if proc.info["name"] == "overmind" or "overmind" in str(proc.info.get("cmdline", [])):
-                        overmind_running = True
-                        break
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-
-            if not overmind_running:
-                overmind_exited = True
-                print("✅ Overmind has exited successfully")
-                break
-
-            await asyncio.sleep(0.5)
-
-        # Step 3: If overmind didn't exit, force kill stuck processes
-        if not overmind_exited:
-            print("⚠️ Overmind did not exit within 15 seconds, checking for stuck processes...")
-
-            # Try to get process list from overmind
-            try:
-                ps_result = subprocess.run(
-                    ["overmind", "ps"], cwd=working_dir, capture_output=True, text=True, timeout=5
-                )
-                if ps_result.returncode == 0:
-                    # Parse overmind ps output to find PIDs
-                    # Format is usually: "process_name   pid   status"
-                    for line in ps_result.stdout.split("\n"):
-                        parts = line.split()
-                        if len(parts) >= 2 and parts[1].isdigit():
-                            pid = int(parts[1])
-                            print(f"🔪 Force killing stuck process {parts[0]} (PID: {pid})")
-                            try:
-                                os.kill(pid, 9)  # SIGKILL
-                            except ProcessLookupError:
-                                pass
-            except Exception as e:
-                print(f"⚠️ Could not get process list from overmind: {e}")
-
-            # Also try to kill overmind itself
-            for proc in psutil.process_iter(["pid", "name", "cmdline"]):
-                try:
-                    if proc.info["name"] == "overmind" or "overmind" in str(proc.info.get("cmdline", [])):
-                        print(f"🔪 Force killing overmind (PID: {proc.info['pid']})")
-                        proc.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-
-            # Wait a bit more for processes to die
-            await asyncio.sleep(2)
-            print("✅ Forced cleanup completed")
-
-        # The cascade will continue:
-        # - Daemon will detect overmind exit and shutdown
-        # - GUI daemon_monitor_task will detect daemon exit and shutdown GUI
-        print("✅ Shutdown sequence completed - cascade in progress...")
-
-        return response.json({"success": True, "message": "Shutdown sequence initiated: overmind → daemon → GUI"})
+            return response.json({"success": True, "message": "Shutdown sequence initiated: daemon → GUI"})
+        else:
+            print("⚠️ Daemon stop returned False, may have already been stopped")
+            return response.json({"success": True, "message": "Daemon stop attempted, may have already been stopped"})
 
     except Exception as e:
+        print(f"❌ Error during shutdown: {e}")
+        import traceback
+        traceback.print_exc()
         return response.json({"error": str(e)}, status=500)
 
 

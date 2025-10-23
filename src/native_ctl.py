@@ -48,53 +48,111 @@ def cmd_ps(args):
     working_dir = args.working_dir or os.getcwd()
 
     # Get daemon PID
-    pid = get_daemon_pid(working_dir)
+    daemon_pid = get_daemon_pid(working_dir)
 
-    print(f"Native Daemon (PID {pid})")
-    print()
+    # Read process information from database
+    import sqlite3
+    db_path = os.path.join(working_dir, "overmind.db")
 
-    # Try to load process status from daemon's state
-    # For now, just show that daemon is running
-    # In a full implementation, this would communicate with daemon via socket/API
+    if not os.path.exists(db_path):
+        print(f"Error: Database not found at {db_path}")
+        sys.exit(1)
 
-    print("Processes:")
-    print("  (Process status available via GUI API)")
-    print()
-    print("Note: Use the web GUI to see detailed process status")
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            # Check if process_status table exists
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='process_status'"
+            )
+            has_status_table = cursor.fetchone() is not None
+
+            if has_status_table:
+                # Get from process_status table (preferred)
+                cursor = conn.execute("""
+                    SELECT process_name, status, pid
+                    FROM process_status
+                    ORDER BY process_name
+                """)
+
+                processes = cursor.fetchall()
+
+                print(f"Native Daemon (PID {daemon_pid})")
+                print()
+                print("PROCESS         PID      STATUS")
+                print("-" * 40)
+
+                if processes:
+                    for row in processes:
+                        process_name = row['process_name']
+                        status = row['status']
+                        pid = row['pid'] if row['pid'] else '-'
+                        print(f"{process_name:<15} {str(pid):<8} {status}")
+                else:
+                    print("  (No processes found)")
+            else:
+                # Fallback: read from output_lines
+                print(f"Native Daemon (PID {daemon_pid})")
+                print()
+                print("  (Process status table not available - daemon may need restart)")
+
+    except Exception as e:
+        print(f"Error reading process status: {e}")
+        sys.exit(1)
 
 
-def cmd_restart(args):
-    """Restart a process"""
+def _send_daemon_command(working_dir: str, command: str, process_name: str):
+    """Send a command to the daemon via database"""
+    import sqlite3
+
+    db_path = os.path.join(working_dir, "overmind.db")
+
+    if not os.path.exists(db_path):
+        print(f"Error: Database not found at {db_path}")
+        sys.exit(1)
+
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "INSERT INTO daemon_commands (command, process_name, timestamp) VALUES (?, ?, ?)",
+                (command, process_name, time.time())
+            )
+            conn.commit()
+        print(f"{command.capitalize()} command sent for {process_name}")
+    except Exception as e:
+        print(f"Error sending command: {e}")
+        sys.exit(1)
+
+
+def cmd_start(args):
+    """Start a process"""
     if not args.process:
         print("Error: process name required")
-        print("Usage: native_ctl restart <process_name>")
         sys.exit(1)
 
     working_dir = args.working_dir or os.getcwd()
-    process_name = args.process
-
-    print(f"Restarting process: {process_name}")
-    print()
-    print("Note: Process restart is available via the web GUI API")
-    print("      The native daemon doesn't support direct CLI restart yet")
-    print("      Use the GUI or make an API call to /api/restart")
+    _send_daemon_command(working_dir, "start", args.process)
 
 
 def cmd_stop(args):
     """Stop a process"""
     if not args.process:
         print("Error: process name required")
-        print("Usage: native_ctl stop <process_name>")
         sys.exit(1)
 
     working_dir = args.working_dir or os.getcwd()
-    process_name = args.process
+    _send_daemon_command(working_dir, "stop", args.process)
 
-    print(f"Stopping process: {process_name}")
-    print()
-    print("Note: Process stop is available via the web GUI API")
-    print("      The native daemon doesn't support direct CLI stop yet")
-    print("      Use the GUI or make an API call to /api/stop")
+
+def cmd_restart(args):
+    """Restart a process"""
+    if not args.process:
+        print("Error: process name required")
+        sys.exit(1)
+
+    working_dir = args.working_dir or os.getcwd()
+    _send_daemon_command(working_dir, "restart", args.process)
 
 
 def cmd_quit(args):
@@ -171,6 +229,11 @@ Examples:
     # ps command
     ps_parser = subparsers.add_parser("ps", help="Show process status")
     ps_parser.set_defaults(func=cmd_ps)
+
+    # start command
+    start_parser = subparsers.add_parser("start", help="Start a process")
+    start_parser.add_argument("process", help="Process name to start")
+    start_parser.set_defaults(func=cmd_start)
 
     # restart command
     restart_parser = subparsers.add_parser("restart", help="Restart a process")

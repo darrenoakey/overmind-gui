@@ -152,3 +152,14 @@ local/
 
 # MCP server artifacts
 .playwright-mcp/
+
+# Linting and code analysis caches
+.ruff_cache/
+
+# Temporary test files
+temp_test/
+test-*.sh
+
+# Generated documentation
+PROJECT_INDEX.md
+architecture.txt

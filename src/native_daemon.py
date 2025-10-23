@@ -67,6 +67,28 @@ class DatabaseManager:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_output_lines_process_id ON output_lines(process, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_output_lines_id_process ON output_lines(id, process)")
 
+            # Commands table for GUI -> Daemon communication
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS daemon_commands (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    command TEXT NOT NULL,
+                    process_name TEXT,
+                    timestamp REAL NOT NULL,
+                    status TEXT DEFAULT 'pending'
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_daemon_commands_status ON daemon_commands(status)")
+
+            # Status updates table for Daemon -> GUI communication
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS process_status (
+                    process_name TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    pid INTEGER,
+                    updated_at REAL NOT NULL
+                )
+            """)
+
             conn.commit()
 
     def get_connection(self) -> sqlite3.Connection:
@@ -90,6 +112,63 @@ class DatabaseManager:
                 except Exception:
                     pass
             self.connection_pool.clear()
+
+    def add_command(self, command: str, process_name: str = None) -> int:
+        """Add a command for the daemon to execute"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "INSERT INTO daemon_commands (command, process_name, timestamp) VALUES (?, ?, ?)",
+            (command, process_name, time.time())
+        )
+        conn.commit()
+
+        return cursor.lastrowid
+
+    def get_pending_commands(self) -> list:
+        """Get all pending commands"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT id, command, process_name FROM daemon_commands WHERE status = 'pending' ORDER BY id"
+        )
+
+        commands = []
+        for row in cursor.fetchall():
+            commands.append({
+                'id': row[0],
+                'command': row[1],
+                'process_name': row[2]
+            })
+
+        return commands
+
+    def mark_command_completed(self, command_id: int):
+        """Mark a command as completed"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "UPDATE daemon_commands SET status = 'completed' WHERE id = ?",
+            (command_id,)
+        )
+        conn.commit()
+
+    def update_process_status(self, process_name: str, status: str, pid: int = None):
+        """Update process status for GUI to read"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO process_status (process_name, status, pid, updated_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (process_name, status, pid, time.time())
+        )
+        conn.commit()
 
     def store_output_line(self, process: str, html: str) -> int:
         """Store an output line in the database"""
@@ -130,7 +209,7 @@ class NativeDaemonInstance:
 
         # State
         self.is_running = False
-        self.shutdown_event = asyncio.Event()
+        self.shutdown_event = None  # Will be created in async context
 
         # Process management
         self.process_manager: Optional[NativeProcessManager] = None
@@ -165,6 +244,9 @@ class NativeDaemonInstance:
         """Start the native daemon instance"""
         self.is_running = True
         self.status = "running"
+
+        # Create shutdown event in async context
+        self.shutdown_event = asyncio.Event()
 
         logger.info(f"Starting native daemon instance {self.instance_id}")
 
@@ -209,14 +291,58 @@ class NativeDaemonInstance:
 
             logger.info("All processes started successfully - daemon ready")
 
-            # Wait for shutdown signal
-            await self.shutdown_event.wait()
+            # Write initial status to database for GUI
+            for process_name in process_names:
+                process = self.process_manager.processes.get(process_name)
+                if process:
+                    self.db.update_process_status(process_name, process.status, process.pid)
+
+            # Run command processing loop and wait for shutdown
+            await self._run_command_loop()
 
         except Exception as e:
             logger.error(f"Error starting daemon instance: {e}", exc_info=True)
             self.status = "error"
             self._cleanup_pid_file()
             raise
+
+    async def _run_command_loop(self):
+        """Process commands from database and wait for shutdown"""
+        import asyncio
+
+        while not self.shutdown_event.is_set():
+            try:
+                # Check for pending commands
+                commands = self.db.get_pending_commands()
+
+                for cmd_info in commands:
+                    cmd_id = cmd_info['id']
+                    command = cmd_info['command']
+                    process_name = cmd_info['process_name']
+
+                    logger.info(f"Processing command: {command} for process {process_name}")
+
+                    # Execute command
+                    if command == 'restart' and process_name:
+                        self.restart_process(process_name)
+                    elif command == 'stop' and process_name:
+                        self.stop_process(process_name)
+                    elif command == 'start' and process_name:
+                        # Start is handled by initial startup, but we can restart
+                        self.restart_process(process_name)
+
+                    # Mark as completed
+                    self.db.mark_command_completed(cmd_id)
+
+            except Exception as e:
+                logger.error(f"Error processing commands: {e}")
+
+            # Wait before next poll (check for commands every 0.5 seconds)
+            try:
+                await asyncio.wait_for(self.shutdown_event.wait(), timeout=0.5)
+                break  # Shutdown signal received
+            except asyncio.TimeoutError:
+                pass  # Continue polling
 
     async def stop(self):
         """Stop the daemon instance gracefully"""
@@ -239,8 +365,9 @@ class NativeDaemonInstance:
         # Clean up PID file
         self._cleanup_pid_file()
 
-        # Signal shutdown
-        self.shutdown_event.set()
+        # Signal shutdown (if event was created)
+        if self.shutdown_event:
+            self.shutdown_event.set()
 
         self.status = "stopped"
         logger.info(f"Native daemon instance {self.instance_id} stopped")

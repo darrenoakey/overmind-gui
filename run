@@ -4,9 +4,9 @@ Overmind GUI Web Application Runner
 
 This script provides access to all application functionality including:
 - Running the backend (which manages daemon connection)
+- Controlling the daemon (process start/stop/restart)
 - Running tests
 - Development commands
-- Deployment commands
 
 Usage:
     ./run [command] [options]
@@ -15,7 +15,16 @@ Commands:
     server          Start the backend server (default - looks for Procfile in current dir)
     server <path>   Start the backend server from a specific directory (looks for Procfile there)
     test_proc       Run backend with demo Procfile for testing (copies to output/test-run)
-    integration     Run full integration test (requires: pip install playwright selenium)
+
+    Daemon Control:
+    ps [path]       Show process status for daemon in current dir or specified path
+    status [path]   Show daemon status
+    start <proc>    Start a specific process
+    stop <proc>     Stop a specific process
+    restart <proc>  Restart a specific process
+    quit [path]     Stop daemon and all processes
+
+    Development:
     test           Run all tests
     test <module>  Run tests for specific module
     lint           Run linting
@@ -28,6 +37,12 @@ Examples:
     ./run server                    # Start backend, use current dir's Procfile
     ./run server /path/to/real/app  # Start backend, use Procfile in /path/to/real/app
     ./run test_proc                 # Run backend with demo Procfile (logs go to output/)
+
+    ./run ps                        # Show process status (uses current directory)
+    ./run ps output/test-run        # Show process status for test-run
+    ./run restart web               # Restart the 'web' process
+    ./run stop api                  # Stop the 'api' process
+    ./run quit                      # Stop daemon and all processes
     ./run integration               # Run full integration test with browser automation
     ./run test                      # Run all tests
     ./run test utils                # Run tests for utils module
@@ -273,6 +288,31 @@ def show_help():
     """Show help message"""
     print(__doc__)
 
+def run_daemon_command(command, process_name=None, server_path=None):
+    """Run a daemon control command (ps, start, stop, restart, quit, status)"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    native_ctl_path = os.path.join(script_dir, "src", "native_ctl.py")
+
+    # Build command
+    cmd = [sys.executable, native_ctl_path]
+
+    # Add working directory if specified
+    if server_path:
+        cmd.extend(["--working-dir", server_path])
+
+    # Add command
+    cmd.append(command)
+
+    # Add process name if specified
+    if process_name:
+        cmd.append(process_name)
+
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"✗ Command failed: {e}")
+        sys.exit(1)
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description='Overmind GUI Web Application Runner')
@@ -283,7 +323,17 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == 'server':
+    # Daemon control commands
+    if args.command in ['ps', 'status', 'quit']:
+        run_daemon_command(args.command, server_path=args.path_or_module)
+    elif args.command in ['start', 'stop', 'restart']:
+        if not args.path_or_module:
+            print(f"Error: {args.command} requires a process name")
+            print(f"Usage: ./run {args.command} <process_name>")
+            sys.exit(1)
+        run_daemon_command(args.command, process_name=args.path_or_module)
+    # Regular commands
+    elif args.command == 'server':
         run_server(server_path=args.path_or_module)
     elif args.command == 'test_proc':
         run_test_proc(debug=False)

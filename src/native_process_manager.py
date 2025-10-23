@@ -28,6 +28,7 @@ class ManagedProcess:
         formatter: OutputFormatter,
         output_callback: Callable[[str, str], None],
         death_callback: Optional[Callable[[str], None]] = None,
+        status_callback: Optional[Callable[[str, str, int], None]] = None,
         working_directory: str = None,
     ):
         self.entry = entry
@@ -36,6 +37,7 @@ class ManagedProcess:
         self.formatter = formatter
         self.output_callback = output_callback
         self.death_callback = death_callback
+        self.status_callback = status_callback
         self.working_directory = working_directory or os.getcwd()
 
         # Process state
@@ -64,6 +66,8 @@ class ManagedProcess:
         try:
             logger.info(f"Starting process: {self.name}")
             self.status = "starting"
+            if self.status_callback:
+                self.status_callback(self.name, "starting", None)
             self.should_stop.clear()
 
             # Start process with pipes for stdout/stderr
@@ -82,6 +86,8 @@ class ManagedProcess:
             self.stopped_at = None
             self.exit_code = None
             self.status = "running"
+            if self.status_callback:
+                self.status_callback(self.name, "running", self.pid)
 
             # Start output capture threads
             self.stdout_thread = threading.Thread(target=self._capture_stdout, daemon=True, name=f"{self.name}-stdout")
@@ -141,6 +147,8 @@ class ManagedProcess:
             self._wait_for_threads(timeout=2.0)
 
             self.status = "stopped"
+            if self.status_callback:
+                self.status_callback(self.name, "stopped", None)
             self.process = None
             self.pid = None
 
@@ -178,6 +186,19 @@ class ManagedProcess:
             "started_at": self.started_at,
             "stopped_at": self.stopped_at,
             "uptime": time.time() - self.started_at if self.started_at and self.is_running() else 0,
+        }
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization (ProcessInfo-compatible interface)"""
+        return {
+            "name": self.name,
+            "status": self.status,
+            "selected": True,  # Native daemon doesn't have selection concept yet
+            "user_disabled": False,
+            "output_count": 0,  # Output is stored in database, not in memory
+            "broken": False,
+            "last_restart_time": self.started_at or 0,
+            "warning_patterns": [],
         }
 
     def _get_env(self) -> Dict[str, str]:
@@ -320,6 +341,7 @@ class NativeProcessManager:
                 formatter=self.formatter,
                 output_callback=self._handle_output,
                 death_callback=self._handle_process_death,
+                status_callback=self._handle_status_change,
                 working_directory=self.working_directory,
             )
 
@@ -376,6 +398,20 @@ class NativeProcessManager:
         """Get status for all processes"""
         return {name: process.get_status() for name, process in self.processes.items()}
 
+    def get_all_processes(self) -> Dict[str, ManagedProcess]:
+        """Get all processes (ProcessManager-compatible interface)"""
+        return self.processes
+
+    def get_stats(self) -> Dict[str, int]:
+        """Get process statistics (ProcessManager-compatible interface)"""
+        stats = {
+            "total": len(self.processes),
+            "running": sum(1 for p in self.processes.values() if p.status == "running"),
+            "stopped": sum(1 for p in self.processes.values() if p.status == "stopped"),
+            "dead": sum(1 for p in self.processes.values() if p.status == "dead"),
+        }
+        return stats
+
     def _handle_output(self, process_name: str, html_content: str):
         """
         Handle output from a process
@@ -386,12 +422,26 @@ class NativeProcessManager:
         except Exception as e:
             logger.error(f"Error storing output for {process_name}: {e}")
 
+    def _handle_status_change(self, process_name: str, status: str, pid: int = None):
+        """
+        Handle process status changes
+        Updates database for GUI to read
+        """
+        try:
+            self.db.update_process_status(process_name, status, pid)
+            logger.debug(f"Updated status for {process_name}: {status} (PID: {pid})")
+        except Exception as e:
+            logger.error(f"Error updating process status: {e}")
+
     def _handle_process_death(self, process_name: str):
         """
         Handle unexpected process death
         Called when a process dies unexpectedly
         """
         logger.warning(f"Process {process_name} died unexpectedly")
+
+        # Update status
+        self._handle_status_change(process_name, "dead", None)
 
         # Store notification in output
         death_message = f"\n🔴 Process {process_name} died at {time.strftime('%H:%M:%S')}\n"

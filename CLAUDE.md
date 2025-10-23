@@ -64,9 +64,9 @@
   - `procfile_parser.py`: Standalone Procfile parser with validation
   - `output_formatter.py`: Color allocation and ANSI formatting (mimics overmind's output)
   - `native_process_manager.py`: Per-process threading for stdout/stderr capture
-  - `native_daemon.py`: Main daemon orchestration
-  - `native_ctl.py`: CLI commands (ps, restart, stop, quit, status)
-  - `native_daemon_manager.py`: Daemon lifecycle (start/stop/pid management)
+  - `native_daemon.py`: Main daemon orchestration with command processing loop
+  - `native_ctl.py`: CLI commands (start, stop, restart, ps, quit, status) - overmind-compatible interface
+  - `native_daemon_manager.py`: Daemon lifecycle (start/stop/pid management with zombie detection)
 - **Threading Pattern**: Each managed process spawns 3 threads: stdout capture, stderr capture, process monitor
 - **Process Lifecycle**: `preexec_fn=os.setsid` creates process group for clean SIGTERM/SIGKILL handling
 - **Output Flow**: subprocess stdout/stderr → format with process name/color → convert ANSI to HTML → database
@@ -75,6 +75,10 @@
 - **Database Compatibility**: Uses same SQLite schema as overmind daemon for GUI compatibility
 - **Manager Abstraction**: Both DaemonManager and NativeDaemonManager expose same interface (is_daemon_running, start_daemon, stop_daemon)
 - **Integration Point**: main.py's `initialize_managers()` chooses daemon type based on flag, rest of system is agnostic
+- **CLI Unification**: `native_ctl.py` provides same CLI interface as `overmind` (start/stop/restart/ps/quit)
+- **IPC Mechanism**: GUI ↔ Daemon communication via `daemon_commands` table in SQLite (daemon polls every 0.5s)
+- **Zombie Detection**: PID verification uses psutil to check process status and cmdline, not just PID existence
+- **Asyncio Context**: Event primitives must be created in async context, not in __init__
 
 ## Continuous Improvement Protocol
 **Execute AGGRESSIVELY at the end of EVERY task before marking complete**

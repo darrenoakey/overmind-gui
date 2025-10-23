@@ -282,13 +282,22 @@ def initialize_managers(app_instance, working_directory: str, use_overmind: bool
     """Initialize daemon and database managers once we know working directory"""
     # Choose daemon manager based on mode
     if use_overmind:
-        print("📦 Using overmind daemon (legacy mode)")
+        print("=" * 70)
+        print("📦 DAEMON MODE: OVERMIND (legacy mode with tmux)")
+        print("=" * 70)
         app_instance.ctx.daemon_manager = DaemonManager(working_directory)
         app_instance.ctx.daemon_mode = "overmind"
+        app_instance.ctx.daemon_cli = "overmind"  # CLI command for process control
     else:
-        print("🚀 Using native daemon (direct process management)")
+        print("=" * 70)
+        print("🚀 DAEMON MODE: NATIVE (direct process management, no tmux)")
+        print("=" * 70)
         app_instance.ctx.daemon_manager = NativeDaemonManager(working_directory)
         app_instance.ctx.daemon_mode = "native"
+        # Store path to native_ctl for CLI commands
+        import os
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        app_instance.ctx.daemon_cli = os.path.join(script_dir, "native_ctl.py")
 
     app_instance.ctx.database_client = DatabaseClient(working_directory)
 
@@ -301,6 +310,12 @@ def initialize_managers(app_instance, working_directory: str, use_overmind: bool
 
     print(f"📋 Loaded {len(process_names)} processes from Procfile: {process_names}")
 
+    # For native daemon, set all processes to "running" initially
+    # (native daemon starts all processes on launch)
+    if not use_overmind:
+        for process_name in process_names:
+            app_instance.ctx.process_manager.update_process_status(process_name, "running")
+
     print(f"✅ Initialized managers for directory: {working_directory}")
 
 
@@ -310,8 +325,13 @@ def initialize_managers(app_instance, working_directory: str, use_overmind: bool
 
 
 async def poll_overmind_status(app_instance):
-    """Poll overmind status and update process manager"""
+    """Poll overmind status and update process manager (only for overmind mode)"""
     try:
+        # Skip status polling if using native daemon (status comes through /api/poll)
+        daemon_mode = getattr(app_instance.ctx, "daemon_mode", "overmind")
+        if daemon_mode == "native":
+            return  # Native daemon status is handled via API polling, not overmind ps
+
         import subprocess
 
         working_dir = getattr(app_instance.ctx, "working_directory", os.getcwd())
@@ -505,9 +525,19 @@ async def daemon_monitor_task(app_instance):
 
         while not shutdown_event.is_set() and app_instance.ctx.running:
             try:
-                # Check if daemon process exists
-                if not psutil.pid_exists(daemon_pid):
-                    print("⚠️ [DAEMON MONITOR] Daemon process has exited!")
+                # Check if daemon process exists AND is not a zombie
+                daemon_alive = False
+                try:
+                    proc = psutil.Process(daemon_pid)
+                    # Check if it's a zombie
+                    if proc.status() == psutil.STATUS_ZOMBIE:
+                        print(f"⚠️ [DAEMON MONITOR] Daemon PID {daemon_pid} is a zombie process!")
+                    else:
+                        daemon_alive = True
+                except psutil.NoSuchProcess:
+                    print(f"⚠️ [DAEMON MONITOR] Daemon process {daemon_pid} no longer exists!")
+
+                if not daemon_alive:
                     print("🛑 [DAEMON MONITOR] Initiating GUI shutdown...")
 
                     # Set shutdown flag

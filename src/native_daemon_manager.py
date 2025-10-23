@@ -11,6 +11,11 @@ import time
 import logging
 from typing import Optional
 
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,19 +43,56 @@ class NativeDaemonManager:
 
             pid = int(pid_str)
 
-            # Check if process exists
+            # Check if process exists AND is not a zombie
             try:
-                os.kill(pid, 0)
-                logger.debug(f"Native daemon running with PID {pid}")
-                return True
+                os.kill(pid, 0)  # Check if PID exists
+
+                # If psutil is available, do more thorough checks
+                if psutil:
+                    try:
+                        proc = psutil.Process(pid)
+
+                        # Check if zombie
+                        if proc.status() == psutil.STATUS_ZOMBIE:
+                            logger.warning(f"Native daemon PID {pid} is a zombie process - cleaning up")
+                            self._cleanup_stale_pid_file()
+                            return False
+
+                        # Verify it's actually our daemon
+                        try:
+                            cmdline = proc.cmdline()
+                            if cmdline and 'native_daemon.py' in ' '.join(cmdline):
+                                logger.debug(f"Native daemon running with PID {pid}")
+                                return True
+                            else:
+                                logger.warning(f"PID {pid} exists but is not native_daemon.py: {cmdline}")
+                                self._cleanup_stale_pid_file()
+                                return False
+                        except (psutil.AccessDenied, psutil.ZombieProcess):
+                            # Can't access cmdline due to permissions or process is zombie
+                            # Since we already checked for zombie above, this is likely AccessDenied
+                            # Trust that the PID exists and isn't a zombie
+                            logger.debug(f"Native daemon PID {pid} exists but can't verify cmdline (permission denied)")
+                            return True
+
+                    except psutil.NoSuchProcess:
+                        logger.info(f"Process {pid} no longer exists")
+                        self._cleanup_stale_pid_file()
+                        return False
+                else:
+                    # Without psutil, just trust os.kill check (less reliable)
+                    logger.debug(f"Native daemon appears to be running with PID {pid} (psutil not available for verification)")
+                    return True
+
             except OSError:
                 logger.info(f"Stale PID file found (process {pid} no longer exists)")
                 self._cleanup_stale_pid_file()
                 return False
 
         except Exception as e:
-            logger.warning(f"Error checking daemon PID: {e}")
-            self._cleanup_stale_pid_file()
+            logger.error(f"Unexpected error checking daemon PID: {type(e).__name__}: {e}", exc_info=True)
+            # Don't cleanup PID file for unexpected errors - let the daemon continue
+            # Only cleanup if we're sure the process is gone
             return False
 
     def get_daemon_pid(self) -> Optional[int]:

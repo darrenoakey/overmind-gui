@@ -178,6 +178,39 @@ class DatabaseClient:
             logger.error(f"Error getting process stats: {e}")
             return {}
 
+    def get_process_status_updates(self) -> Dict[str, str]:
+        """Get process status from daemon (native mode only)"""
+        if not self.is_database_available():
+            return {}
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                # Check if table exists (for backward compatibility)
+                cursor.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='process_status'"
+                )
+                if not cursor.fetchone():
+                    return {}
+
+                cursor.execute("""
+                    SELECT process_name, status, pid, updated_at
+                    FROM process_status
+                    ORDER BY process_name
+                """)
+
+                status_map = {}
+                for row in cursor.fetchall():
+                    status_map[row["process_name"]] = row["status"]
+
+                return status_map
+
+        except Exception as e:
+            logger.error(f"Error getting process status: {e}")
+            return {}
+
 
 # Comprehensive tests
 
