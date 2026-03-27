@@ -836,8 +836,7 @@ rm overmind-daemon.pid
 
 ## License
 
-This project is open source. Please check the LICENSE file for specific terms.
-
+This project is licensed under [CC BY-NC 4.0](https://darren-static.waft.dev/license) - free to use and modify, but no commercial use without permission.
 ## Support
 
 For issues, feature requests, or questions:
